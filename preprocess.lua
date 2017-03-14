@@ -10,7 +10,7 @@ local options = {
   {'-data_type',         'bitext',  [[Type of text to preprocess. Use 'monotext' for monolingual text.
                                     This option impacts all options choices.]],
                                     {enum={'bitext','monotext'}}},
-  {'-save_data',               '',  [[Output file for the prepared data]],
+  {'-save_data',               '',  [[Output file for the prepared data.]],
                                     {valid=onmt.utils.ExtendedCmdLine.nonEmpty}}
 }
 
@@ -19,9 +19,9 @@ cmd:setCmdLineOptions(options, 'Preprocess')
 onmt.data.Preprocessor.declareOpts(cmd, dataType)
 
 local otherOptions = {
-  {'-seed',                   3425,    [[Random seed]],
+  {'-seed',                   3425,    [[Random seed.]],
                                    {valid=onmt.utils.ExtendedCmdLine.isUInt()}},
-  {'-report_every',           100000,  [[Report status every this many sentences]],
+  {'-report_every',           100000,  [[Report status every this many sentences.]],
                                    {valid=onmt.utils.ExtendedCmdLine.isUInt()}}
 }
 cmd:setCmdLineOptions(otherOptions, 'Other')
@@ -45,10 +45,11 @@ local function main()
   local data = { dataType=dataType }
 
   data.dicts = {}
-  data.dicts.src = Vocabulary.init('train',
+  data.dicts.src = Vocabulary.init('source',
                                    opt.train_src or opt.train,
                                    opt.src_vocab or opt.vocab,
                                    opt.src_vocab_size or opt.vocab_size,
+                                   opt.src_words_min_frequency or opt.words_min_frequency,
                                    opt.features_vocabs_prefix,
                                    function(s) return isValid(s, opt.src_seq_length or opt.seq_length) end)
   if dataType ~= 'monotext' then
@@ -56,6 +57,7 @@ local function main()
                                      opt.train_tgt,
                                      opt.tgt_vocab,
                                      opt.tgt_vocab_size,
+                                     opt.tgt_words_min_frequency,
                                      opt.features_vocabs_prefix,
                                      function(s) return isValid(s, opt.tgt_seq_length) end)
   end
