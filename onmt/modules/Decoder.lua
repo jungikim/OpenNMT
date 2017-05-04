@@ -16,33 +16,61 @@ Inherits from [onmt.Sequencer](onmt+modules+Sequencer).
 --]]
 local Decoder, parent = torch.class('onmt.Decoder', 'onmt.Sequencer')
 
+local options = {
+  {
+    '-input_feed', true,
+    [[Feed the context vector at each time step as additional input
+      (via concatenation with the word embeddings) to the decoder.]],
+    {
+      structural = 0
+    }
+  }
+}
+
+function Decoder.declareOpts(cmd)
+  cmd:setCmdLineOptions(options)
+  onmt.Encoder.declareOpts(cmd)
+end
 
 --[[ Construct a decoder layer.
 
 Parameters:
 
+  * `args` - module arguments
   * `inputNetwork` - input nn module.
-  * `rnn` - recurrent module, such as [onmt.LSTM](onmt+modules+LSTM).
-  * `generator` - optional, an output [onmt.Generator](onmt+modules+Generator).
-  * `inputFeed` - bool, enable input feeding.
+  * `generator` - an output generator.
+  * `attentionModel` - attention model to apply on source.
 --]]
-function Decoder:__init(inputNetwork, rnn, generator, inputFeed)
+function Decoder:__init(args, inputNetwork, generator, attentionModel)
+  local RNN = onmt.LSTM
+  if args.rnn_type == 'GRU' then
+    RNN = onmt.GRU
+  end
+
+  -- Input feeding means the decoder takes an extra
+  -- vector each time representing the attention at the
+  -- previous step.
+  local inputSize = inputNetwork.inputSize
+  if args.input_feed then
+    inputSize = inputSize + args.rnn_size
+  end
+
+  local rnn = RNN.new(args.layers, inputSize, args.rnn_size,
+                      args.dropout, args.residual, args.dropout_input)
+
   self.rnn = rnn
   self.inputNet = inputNetwork
 
-  self.args = {}
+  self.args = args
   self.args.rnnSize = self.rnn.outputSize
   self.args.numEffectiveLayers = self.rnn.numEffectiveLayers
 
   self.args.inputIndex = {}
   self.args.outputIndex = {}
 
-  -- Input feeding means the decoder takes an extra
-  -- vector each time representing the attention at the
-  -- previous step.
-  self.args.inputFeed = inputFeed
+  self.args.inputFeed = args.input_feed
 
-  parent.__init(self, self:_buildModel())
+  parent.__init(self, self:_buildModel(attentionModel))
 
   -- The generator use the output of the decoder sequencer to generate the
   -- likelihoods over the target vocabulary.
@@ -63,7 +91,7 @@ function Decoder.load(pretrained)
   self.args = pretrained.args
 
   parent.__init(self, pretrained.modules[1])
-  self.generator = pretrained.modules[2]
+  self.generator = onmt.Generator.load(pretrained.modules[2])
   self:add(self.generator)
 
   self:resetPreallocation()
@@ -107,7 +135,7 @@ Returns: An nn-graph mapping
   ${if}$ is the input feeding, and
   ${a}$ is the context vector computed at this timestep.
 --]]
-function Decoder:_buildModel()
+function Decoder:_buildModel(attentionModel)
   local inputs = {}
   local states = {}
 
@@ -145,18 +173,45 @@ function Decoder:_buildModel()
   -- Forward states and input into the RNN.
   local outputs = self.rnn(states)
 
-  -- The output of a subgraph is a node: split it to access the last RNN output.
-  outputs = { outputs:split(self.args.numEffectiveLayers) }
+  if self.args.numEffectiveLayers > 1 then
+    -- The output of a subgraph is a node: split it to access the last RNN output.
+    outputs = { outputs:split(self.args.numEffectiveLayers) }
+  else
+    outputs = { outputs }
+  end
 
   -- Compute the attention here using h^L as query.
-  local attnLayer = onmt.GlobalAttention(self.args.rnnSize)
+  local attnLayer = attentionModel
   attnLayer.name = 'decoderAttn'
-  local attnOutput = attnLayer({outputs[#outputs], context})
+  local attnInput = {outputs[#outputs], context}
+  local attnOutput = attnLayer(attnInput)
   if self.rnn.dropout > 0 then
     attnOutput = nn.Dropout(self.rnn.dropout)(attnOutput)
   end
   table.insert(outputs, attnOutput)
   return nn.gModule(inputs, outputs)
+end
+
+function Decoder:findAttentionModel()
+  if not self.decoderAttn then
+    self.network:apply(function (layer)
+      if layer.name == 'decoderAttn' then
+        self.decoderAttn = layer
+      elseif layer.name == 'softmaxAttn' then
+        self.softmaxAttn = layer
+      end
+    end)
+    self.decoderAttnClones = {}
+  end
+  for t = #self.decoderAttnClones+1, #self.networkClones do
+    self:net(t):apply(function (layer)
+      if layer.name == 'decoderAttn' then
+        self.decoderAttnClones[t] = layer
+      elseif layer.name == 'softmaxAttn' then
+        self.decoderAttnClones[t].softmaxAttn = layer
+      end
+    end)
+  end
 end
 
 --[[ Mask padding means that the attention-layer is constrained to
@@ -168,6 +223,7 @@ end
   * See  [onmt.MaskedSoftmax](onmt+modules+MaskedSoftmax).
 --]]
 function Decoder:maskPadding(sourceSizes, sourceLength)
+  self:findAttentionModel()
 
   local function substituteSoftmax(module)
     if module.name == 'softmaxAttn' then
@@ -187,26 +243,9 @@ function Decoder:maskPadding(sourceSizes, sourceLength)
     end
   end
 
-  if not self.decoderAttn then
-    self.network:apply(function (layer)
-      if layer.name == 'decoderAttn' then
-        self.decoderAttn = layer
-      end
-    end)
-  end
   self.decoderAttn:replace(substituteSoftmax)
 
-  if not self.decoderAttnClones then
-    self.decoderAttnClones = {}
-  end
   for t = 1, #self.networkClones do
-    if not self.decoderAttnClones[t] then
-      self:net(t):apply(function (layer)
-        if layer.name == 'decoderAttn' then
-          self.decoderAttnClones[t] = layer
-        end
-      end)
-    end
     self.decoderAttnClones[t]:replace(substituteSoftmax)
   end
 end
@@ -273,21 +312,21 @@ end
   Parameters:
 
   * `batch` - `Batch` object
-  * `encoderStates` -
+  * `initialStates` - initialization of decoder.
   * `context` -
   * `func` - Calls `func(out, t)` each timestep.
 --]]
 
-function Decoder:forwardAndApply(batch, encoderStates, context, func)
+function Decoder:forwardAndApply(batch, initialStates, context, func)
   -- TODO: Make this a private method.
 
   if self.statesProto == nil then
-    self.statesProto = onmt.utils.Tensor.initTensorTable(#encoderStates,
+    self.statesProto = onmt.utils.Tensor.initTensorTable(#initialStates,
                                                          self.stateProto,
                                                          { batch.size, self.args.rnnSize })
   end
 
-  local states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+  local states = onmt.utils.Tensor.copyTensorTable(self.statesProto, initialStates)
 
   local prevOut
 
@@ -302,13 +341,13 @@ end
   Parameters:
 
   * `batch` - a `Batch` object.
-  * `encoderStates` - a batch of initial decoder states (optional) [0]
+  * `initialStates` - a batch of initial decoder states (optional) [0]
   * `context` - the context to apply attention to.
 
   Returns: Table of top hidden state for each timestep.
 --]]
-function Decoder:forward(batch, encoderStates, context)
-  encoderStates = encoderStates
+function Decoder:forward(batch, initialStates, context)
+  initialStates = initialStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
@@ -318,7 +357,7 @@ function Decoder:forward(batch, encoderStates, context)
 
   local outputs = {}
 
-  self:forwardAndApply(batch, encoderStates, context, function (out)
+  self:forwardAndApply(batch, initialStates, context, function (out)
     table.insert(outputs, out)
   end)
 
@@ -352,10 +391,14 @@ function Decoder:backward(batch, outputs, criterion)
   local indvAvgLoss = torch.zeros(outputs[1]:size(1))
 
   for t = batch.targetLength, 1, -1 do
+    local refOutput = batch:getTargetOutput(t)
+
+    -- sampling-based generator need outputs during training
+    local prepOutputs = { outputs[t], refOutput }
+
     -- Compute decoder output gradients.
     -- Note: This would typically be in the forward pass.
-    local pred = self.generator:forward(outputs[t])
-    local output = batch:getTargetOutput(t)
+    local pred = self.generator:forward(prepOutputs)
 
     if self.indvLoss then
       for i = 1, pred[1]:size(1) do
@@ -364,7 +407,7 @@ function Decoder:backward(batch, outputs, criterion)
           local tmpOutput = {}
           for j = 1, #pred do
             table.insert(tmpPred, pred[j][{{i}, {}}])
-            table.insert(tmpOutput, output[j][{{i}}])
+            table.insert(tmpOutput, refOutput[j][{{i}}])
           end
           local tmpLoss = criterion:forward(tmpPred, tmpOutput)
           indvAvgLoss[i] = indvAvgLoss[i] + tmpLoss
@@ -372,17 +415,25 @@ function Decoder:backward(batch, outputs, criterion)
         end
       end
     else
-      loss = loss + criterion:forward(pred, output)
+      loss = loss + criterion:forward(pred, refOutput)
     end
 
     -- Compute the criterion gradient.
-    local genGradOut = criterion:backward(pred, output)
+    local genGradOut = criterion:backward(pred, refOutput)
+
+    -- normalize gradient - we might have several batches in parallel, so we divide by total size of batch
     for j = 1, #genGradOut do
-      genGradOut[j]:div(batch.totalSize)
+      -- each criterion might have its own normalization function
+      if criterion.normalizationFunc and criterion.normalizationFunc[j] ~= false then
+        criterion.normalizationFunc[j](genGradOut[j], batch.totalSize)
+      else
+        genGradOut[j]:div(batch.totalSize)
+      end
     end
 
     -- Compute the final layer gradient.
-    local decGradOut = self.generator:backward(outputs[t], genGradOut)
+    local decGradOut = self.generator:backward(prepOutputs, genGradOut)
+
     gradStatesInput[#gradStatesInput]:add(decGradOut)
 
     -- Compute the standard backward.
@@ -415,22 +466,22 @@ end
 Parameters:
 
   * `batch` - a `Batch` to score.
-  * `encoderStates` - initialization of decoder.
+  * `initialStates` - initialization of decoder.
   * `context` - the attention context.
   * `criterion` - a pointwise criterion.
 
 --]]
-function Decoder:computeLoss(batch, encoderStates, context, criterion)
-  encoderStates = encoderStates
+function Decoder:computeLoss(batch, initialStates, context, criterion)
+  initialStates = initialStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
 
   local loss = 0
-  self:forwardAndApply(batch, encoderStates, context, function (out, t)
+  self:forwardAndApply(batch, initialStates, context, function (out, t)
     local pred = self.generator:forward(out)
-    local output = batch:getTargetOutput(t)
-    loss = loss + criterion:forward(pred, output)
+    local refOutput = batch:getTargetOutput(t)
+    loss = loss + criterion:forward(pred, refOutput)
   end)
 
   return loss
@@ -442,19 +493,19 @@ end
 Parameters:
 
   * `batch` - a `Batch` to score.
-  * `encoderStates` - initialization of decoder.
+  * `initialStates` - initialization of decoder.
   * `context` - the attention context.
 
 --]]
-function Decoder:computeScore(batch, encoderStates, context)
-  encoderStates = encoderStates
+function Decoder:computeScore(batch, initialStates, context)
+  initialStates = initialStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
 
   local score = {}
 
-  self:forwardAndApply(batch, encoderStates, context, function (out, t)
+  self:forwardAndApply(batch, initialStates, context, function (out, t)
     local pred = self.generator:forward(out)
     for b = 1, batch.size do
       if t <= batch.targetSize[b] then

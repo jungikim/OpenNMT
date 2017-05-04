@@ -1,56 +1,3 @@
----------------------------------------------------------------------------------
--- Local utility functions
----------------------------------------------------------------------------------
-
-local function adagradStep(dfdx, lr, state)
-  if not state.var then
-    state.var = torch.Tensor():typeAs(dfdx):resizeAs(dfdx):zero()
-    state.std = torch.Tensor():typeAs(dfdx):resizeAs(dfdx)
-  end
-
-  state.var:addcmul(1, dfdx, dfdx)
-  state.std:sqrt(state.var)
-  dfdx:cdiv(state.std:add(1e-10)):mul(-lr)
-end
-
-local function adamStep(dfdx, lr, state)
-  local beta1 = state.beta1 or 0.9
-  local beta2 = state.beta2 or 0.999
-  local eps = state.eps or 1e-8
-
-  state.t = state.t or 0
-  state.m = state.m or dfdx.new(dfdx:size()):zero()
-  state.v = state.v or dfdx.new(dfdx:size()):zero()
-  state.denom = state.denom or dfdx.new(dfdx:size()):zero()
-
-  state.t = state.t + 1
-  state.m:mul(beta1):add(1-beta1, dfdx)
-  state.v:mul(beta2):addcmul(1-beta2, dfdx, dfdx)
-  state.denom:copy(state.v):sqrt():add(eps)
-
-  local bias1 = 1-beta1^state.t
-  local bias2 = 1-beta2^state.t
-  local stepSize = lr * math.sqrt(bias2)/bias1
-
-  dfdx:copy(state.m):cdiv(state.denom):mul(-stepSize)
-end
-
-local function adadeltaStep(dfdx, state)
-  local rho = state.rho or 0.9
-  local eps = state.eps or 1e-6
-  state.var = state.var or dfdx.new(dfdx:size()):zero()
-  state.std = state.std or dfdx.new(dfdx:size()):zero()
-  state.delta = state.delta or dfdx.new(dfdx:size()):zero()
-  state.accDelta = state.accDelta or dfdx.new(dfdx:size()):zero()
-  state.var:mul(rho):addcmul(1-rho, dfdx, dfdx)
-  state.std:copy(state.var):add(eps):sqrt()
-  state.delta:copy(state.accDelta):add(eps):sqrt():cdiv(state.std):cmul(dfdx)
-  dfdx:copy(state.delta):mul(-1)
-  state.accDelta:mul(rho):addcmul(1-rho, state.delta, state.delta)
-end
-
----------------------------------------------------------------------------------
-
 local Optim = torch.class('Optim')
 
 local options = {
@@ -63,53 +10,71 @@ local options = {
   },
   {
     '-uneven_batches', false,
-    [[If true, batches are filled up to max_batch_size even if source lengths are different.
+    [[If set, batches are filled up to `-max_batch_size` even if the source lengths are different.
       Slower but needed for some tasks.]]
   },
   {
     '-optim', 'sgd',
     [[Optimization method.]],
     {
-      enum = {'sgd', 'adagrad', 'adadelta', 'adam'}
+      enum = {'sgd', 'adagrad', 'adadelta', 'adam'},
+      train_state = true
     }
   },
   {
     '-learning_rate', 1,
-    [[Starting learning rate. If adagrad or adam is used, then this is the global learning rate.
-      Recommended settings are: sgd = 1, adagrad = 0.1, adam = 0.0002.]]
+    [[Initial learning rate. If `adagrad` or `adam` is used, then this is the global learning rate.
+      Recommended settings are: `sgd` = 1, `adagrad` = 0.1, `adam` = 0.0002.]],
+    {
+      train_state = true
+    }
   },
   {
     '-min_learning_rate', 0,
-    [[Do not continue the training past this learning rate value.]]
+    [[Do not continue the training past this learning rate value.]],
+    {
+      train_state = true
+    }
   },
   {
     '-max_grad_norm', 5,
-    [[Clip the gradients norm to this value.]]
+    [[Clip the gradients norm to this value.]],
+    {
+      train_state = true
+    }
   },
   {
     '-learning_rate_decay', 0.7,
-    [[Learning rate decay factor: learning_rate = learning_rate * learning_rate_decay.]]
+    [[Learning rate decay factor: `learning_rate = learning_rate * learning_rate_decay`.]],
+    {
+      train_state = true
+    }
   },
   {
     '-start_decay_at', 9,
     [[In "default" decay mode, start decay after this epoch.]],
     {
-      valid = onmt.utils.ExtendedCmdLine.isUInt()
+      valid = onmt.utils.ExtendedCmdLine.isUInt(),
+      train_state = true
     }
   },
   {
     '-start_decay_ppl_delta', 0,
-    [[Start decay when validation perplexity improvement is lower than this value.]]
+    [[Start decay when validation perplexity improvement is lower than this value.]],
+    {
+      train_state = true
+    }
   },
   {
     '-decay', 'default',
     [[When to apply learning rate decay.
-      "default": decay after each epoch past start_decay_at or as soon as the validation perplexity
-      is not improving more than start_decay_ppl_delta,
-      "perplexity_only": only decay when validation perplexity is not improving more than
-      start_decay_ppl_delta.]],
+      `default`: decay after each epoch past `-start_decay_at` or as soon as the
+      validation perplexity is not improving more than `-start_decay_ppl_delta`,
+      `perplexity_only`: only decay when validation perplexity is not improving more than
+      `-start_decay_ppl_delta`.]],
     {
-      enum = {'default', 'perplexity_only'}
+      enum = {'default', 'perplexity_only'},
+      train_state = true
     }
   }
 }
@@ -118,27 +83,13 @@ function Optim.declareOpts(cmd)
   cmd:setCmdLineOptions(options, 'Optimization')
 end
 
-function Optim:__init(args, optimStates)
+function Optim:__init(args)
   self.args = onmt.utils.ExtendedCmdLine.getModuleOpts(args, options)
   self.valPerf = {}
-
-  if self.args.optim == 'sgd' then
-    self.args.start_decay_at = args.start_decay_at
-  else
-    if optimStates ~= nil then
-      self.optimStates = optimStates
-    else
-      self.optimStates = {}
-    end
-  end
 end
 
-function Optim:setOptimStates(num)
-  if self.args.optim ~= 'sgd' then
-    for j = 1, num do
-      self.optimStates[j] = {}
-    end
-  end
+function Optim:setOptimStates(states)
+  self.optimStates = states
 end
 
 function Optim:zeroGrad(gradParams)
@@ -148,6 +99,13 @@ function Optim:zeroGrad(gradParams)
 end
 
 function Optim:prepareGrad(gradParams)
+  if self.args.optim ~= 'sgd' and not self.optimStates then
+    self.optimStates = {}
+    for _ = 1, #gradParams do
+      table.insert(self.optimStates, {})
+    end
+  end
+
   -- Compute gradients norm.
   local gradNorm = 0
   for j = 1, #gradParams do
@@ -165,11 +123,11 @@ function Optim:prepareGrad(gradParams)
 
     -- Prepare gradients params according to the optimization method.
     if self.args.optim == 'adagrad' then
-      adagradStep(gradParams[j], self.args.learning_rate, self.optimStates[j])
+      Optim.adagradStep(gradParams[j], self.args.learning_rate, self.optimStates[j])
     elseif self.args.optim == 'adadelta' then
-      adadeltaStep(gradParams[j], self.optimStates[j])
+      Optim.adadeltaStep(gradParams[j], self.optimStates[j])
     elseif self.args.optim == 'adam' then
-      adamStep(gradParams[j], self.args.learning_rate, self.optimStates[j])
+      Optim.adamStep(gradParams[j], self.args.learning_rate, self.optimStates[j])
     else
       gradParams[j]:mul(-self.args.learning_rate)
     end
@@ -211,11 +169,17 @@ function Optim:updateLearningRate(score, epoch)
     elseif self.args.decay == 'perplexity_only' and decayConditionMet then
       decayLr()
     end
-
-    return self.args.learning_rate >= self.args.min_learning_rate
   end
 
-  return true
+  return self.args.learning_rate
+end
+
+function Optim:isFinished()
+  if self.args.optim == 'sgd' then
+    return self.args.learning_rate < self.args.min_learning_rate
+  else
+    return false
+  end
 end
 
 function Optim:getLearningRate()
@@ -224,6 +188,53 @@ end
 
 function Optim:getStates()
   return self.optimStates
+end
+
+function Optim.adagradStep(dfdx, lr, state)
+  if not state.var then
+    state.var = torch.Tensor():typeAs(dfdx):resizeAs(dfdx):zero()
+    state.std = torch.Tensor():typeAs(dfdx):resizeAs(dfdx)
+  end
+
+  state.var:addcmul(1, dfdx, dfdx)
+  state.std:sqrt(state.var)
+  dfdx:cdiv(state.std:add(1e-10)):mul(-lr)
+end
+
+function Optim.adamStep(dfdx, lr, state)
+  local beta1 = state.beta1 or 0.9
+  local beta2 = state.beta2 or 0.999
+  local eps = state.eps or 1e-8
+
+  state.t = state.t or 0
+  state.m = state.m or dfdx.new(dfdx:size()):zero()
+  state.v = state.v or dfdx.new(dfdx:size()):zero()
+  state.denom = state.denom or dfdx.new(dfdx:size()):zero()
+
+  state.t = state.t + 1
+  state.m:mul(beta1):add(1-beta1, dfdx)
+  state.v:mul(beta2):addcmul(1-beta2, dfdx, dfdx)
+  state.denom:copy(state.v):sqrt():add(eps)
+
+  local bias1 = 1-beta1^state.t
+  local bias2 = 1-beta2^state.t
+  local stepSize = lr * math.sqrt(bias2)/bias1
+
+  dfdx:copy(state.m):cdiv(state.denom):mul(-stepSize)
+end
+
+function Optim.adadeltaStep(dfdx, state)
+  local rho = state.rho or 0.9
+  local eps = state.eps or 1e-6
+  state.var = state.var or dfdx.new(dfdx:size()):zero()
+  state.std = state.std or dfdx.new(dfdx:size()):zero()
+  state.delta = state.delta or dfdx.new(dfdx:size()):zero()
+  state.accDelta = state.accDelta or dfdx.new(dfdx:size()):zero()
+  state.var:mul(rho):addcmul(1-rho, dfdx, dfdx)
+  state.std:copy(state.var):add(eps):sqrt()
+  state.delta:copy(state.accDelta):add(eps):sqrt():cdiv(state.std):cmul(dfdx)
+  dfdx:copy(state.delta):mul(-1)
+  state.accDelta:mul(rho):addcmul(1-rho, state.delta, state.delta)
 end
 
 return Optim

@@ -2,9 +2,33 @@
 
 ### New features
 
-* Add alternative encoders (deep bidirectional and pyramidal deep bidirectional)
+* Display sentence length distribution in preprocess
+* Support vectors as inputs using [Kaldi](http://kaldi-asr.org/) input format
+* Support parallel file alignment by index in addition to line-by-line
+* Add script to convert and/or generate pretrained word embeddings
+* Add a bridge layer between the encoder and decoder
+* New feature to keep token frequency in generated dictionaries
+* [*Breaking, renamed option*] Introduce `partition` sampling type, rename sampling perplexity options.
+
+### Fixes and improvements
+
+* Improve command line parser (space-separated list of values and boolean arguments), do not allow duplicate commandline
+options and do not print help on errors
+* Improve correctness of `DBiEncoder` and `PDBiEncoder` implementation
+* Fix translation error of models profiled during training
+* Fix translation error of models trained without attention
+* Fix error when using one-layer GRU
+* Fix incorrect coverage normalization formula during the beam search
+* Improve unicode support for languages using combining marks like Hindi
+
+## [v0.6.0](https://github.com/OpenNMT/OpenNMT/releases/tag/v0.6.0) (2017-04-07)
+
+### New features
+
+* Add new encoders: deep bidirectional and pyramidal deep bidirectional
+* Add attention variants: no attention and *dot*, *general* or *concat* global attention
 * Add alternative learning rate decay strategy for SGD training
-* Introduce dynamic parameter change for dropout
+* Introduce dynamic parameter change for dropout and fixed word embeddings
 * Add length and coverage normalization during the beam search
 * Add translation option to dump input sentence encoding
 * Add TensorBoard metrics visualisation with [Crayon](https://github.com/torrvision/crayon)
@@ -13,12 +37,13 @@
 ### Fixes and improvements
 
 * [*Breaking, changed option*] `-fix_word_vecs` options now accept `0` and `1` for a better retraining experience
-* Allow to change the state of word embeddings optimization during a retraining
-* Check consistency of option settings when training from existing models
-* Save and restore random number generator states in checkpoints
-* Output n-best hypotheses in the output file
+* Check consistency of option settings when training from checkpoints
+* Save and restore random number generator states from checkpoints
+* Output more dataset metrics during the preprocessing
+* Improve error message on invalid options
+* Fix missing n-best hypotheses list in the output file
 * Fix individual losses that were always computed when using random sampling
-* Fix duplicate logs in parallel mode
+* Fix duplicated logs in parallel mode
 
 ## [v0.5.3](https://github.com/OpenNMT/OpenNMT/releases/tag/v0.5.3) (2017-03-30)
 
