@@ -7,7 +7,7 @@ local options = {
   {'-rnn_size', 500, [[Size of RNN hidden states]],
                      {valid=onmt.utils.ExtendedCmdLine.isUInt()}},
   {'-rnn_type', 'LSTM', [[Type of RNN cell]],
-                     {enum={'LSTM','GRU'}}},
+                     {enum={'LSTM','GRU', 'QRNN'}}},
   {'-word_vec_size', 0, [[Common word embedding size. If set, this overrides -src_word_vec_size and -tgt_word_vec_size.]],
                      {valid=onmt.utils.ExtendedCmdLine.isUInt()}},
   {'-src_word_vec_size', '500', [[Comma-separated list of source embedding sizes: word[,feat1,feat2,...].]]},
@@ -34,7 +34,10 @@ local options = {
                          {valid=onmt.utils.ExtendedCmdLine.fileNullOrExists}},
   {'-fix_word_vecs_enc', false, [[Fix word embeddings on the encoder side]]},
   {'-fix_word_vecs_dec', false, [[Fix word embeddings on the decoder side]]},
-  {'-dropout', 0.3, [[Dropout probability. Dropout is applied between vertical LSTM stacks.]]}
+  {'-dropout', 0.3, [[Dropout probability. Dropout is applied between vertical LSTM stacks.]]},
+  {'-zoneout', 0.3, [[Zoneout probability. Zoneout is applied between horizontal QRNN stacks.]]},
+  {'-poolingMethod', 'fo', [[Pooling method for QRNN.]], {enum={'fo', 'ifo'}}},
+  {'-filterWidth', 2, [[kernel filter width.]], {valid=onmt.utils.ExtendedCmdLine.isUInt()}}
 }
 
 function Seq2Seq.declareOpts(cmd)

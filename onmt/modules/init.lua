@@ -20,4 +20,9 @@ require('onmt.modules.FeaturesGenerator')
 
 require('onmt.modules.ParallelClassNLLCriterion')
 
+require('onmt.modules.QRNNCNN')
+require('onmt.modules.QRNNRNN')
+require('onmt.modules.QRNNEncoder')
+require('onmt.modules.QRNNDecoder')
+
 return onmt

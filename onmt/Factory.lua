@@ -88,6 +88,18 @@ end
 function Factory.buildEncoder(opt, inputNetwork)
   local encoder
 
+  if opt.rnn_type == 'QRNN' then
+    return onmt.QRNNEncoder.new(inputNetwork,
+                                opt.layers,
+                                inputNetwork.inputSize,
+                                opt.rnn_size,
+                                opt.filterWidth,
+                                opt.poolingMethod,
+                                opt.dropout,
+                                opt.zoneout,
+                                --[[ denseNet --]] opt.residual)
+  end
+
   local RNN = onmt.LSTM
   if opt.rnn_type == 'GRU' then
     RNN = onmt.GRU
@@ -137,6 +149,9 @@ function Factory.loadEncoder(pretrained, clone)
   if pretrained.name == 'BiEncoder' then
     return onmt.BiEncoder.load(pretrained)
   end
+  if pretrained.name == 'QRNNEncoder' then
+    return onmt.QRNNEncoder.load(pretrained)
+  end
 
   -- Keep for backward compatibility.
   local brnn = #pretrained.modules == 2
@@ -156,6 +171,10 @@ function Factory.buildDecoder(opt, inputNetwork, generator, verbose)
     end
     inputSize = inputSize + opt.rnn_size
   end
+
+--  if opt.rnn_type == 'QRNN' then
+--    return onmt.QRNNDecoder.new(opt, inputNetwork, generator, opt.input_feed == 1)
+--  end
 
   local RNN = onmt.LSTM
   if opt.rnn_type == 'GRU' then
@@ -180,6 +199,10 @@ function Factory.loadDecoder(pretrained, clone)
   if clone then
     pretrained = onmt.utils.Tensor.deepClone(pretrained)
   end
+
+--  if pretrained.name == 'QRNNDecoder' then
+--    return onmt.QRNNDecoder.load(pretrained)
+--  end
 
   return onmt.Decoder.load(pretrained)
 end

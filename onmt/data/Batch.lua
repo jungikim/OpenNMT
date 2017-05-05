@@ -243,4 +243,55 @@ function Batch:getTargetOutput(t)
   return outputs
 end
 
+local function addInputFeaturesAllTimeSteps(inputs, featuresSeq)
+  local features = {}
+  for j = 1, #featuresSeq do
+    table.insert(features, featuresSeq[j]:transpose(1,2))
+  end
+  if #features > 1 then
+    table.insert(inputs, features)
+  else
+    onmt.utils.Table.append(inputs, features)
+  end
+end
+
+--[[ Get source input batch. (batch x sentence length) --]]
+function Batch:getSourceInput()
+  -- If a regular input, return word id, otherwise a table with features.
+  local inputs = self.sourceInput:transpose(1,2)
+
+  if #self.sourceInputFeatures > 0 then
+    inputs = { inputs }
+    addInputFeaturesAllTimeSteps(inputs, self.sourceInputFeatures)
+  end
+
+  return inputs
+end
+
+--[[ Get target input batch. (batch x sentence length) --]]
+function Batch:getTargetInput()
+  -- If a regular input, return word id, otherwise a table with features.
+  local inputs = self.targetInput:transpose(1,2)
+
+  if #self.targetInputFeatures > 0 then
+    inputs = { inputs }
+    addInputFeaturesAllTimeSteps(inputs, self.targetInputFeatures)
+  end
+
+  return inputs
+end
+
+--[[ Get target output batch. (batch x sentence length) --]]
+function Batch:getTargetOutput()
+  -- If a regular input, return word id, otherwise a table with features.
+  local outputs = { self.targetOutput:transpose(1,2) }
+
+  for j = 1, #self.targetOutputFeatures do
+    table.insert(outputs, self.targetOutputFeatures[j]:transpose(1,2))
+  end
+
+  return outputs
+end
+
+
 return Batch

@@ -73,7 +73,7 @@ function Trainer:train(model, optim, trainData, validData, dataset, info)
     end
 
     -- optimize memory of the first clone
-    if not self.args.disable_mem_optimization then
+    if not self.options.disable_mem_optimization then
       local batch = onmt.utils.Cuda.convert(trainData:getBatch(1))
       batch.totalSize = batch.size
       onmt.utils.Memory.optimize(_G.model, batch, verbose)
