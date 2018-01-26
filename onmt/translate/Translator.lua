@@ -126,6 +126,22 @@ local options = {
     '-save_beam_to', '',
     [[Path to a file where the beam search exploration will be saved in a JSON format.
       Requires the `dkjson` package.]]
+  },
+  {
+    '-svdsoftmax_cpu_w', -1,
+    valid = onmt.utils.ExtendedCmdLine.isInt
+  },
+  {
+    '-svdsoftmax_cpu_n', -1,
+    valid = onmt.utils.ExtendedCmdLine.isInt
+  },
+  {
+    '-svdsoftmax_gpu_w', -1,
+    valid = onmt.utils.ExtendedCmdLine.isInt
+  },
+  {
+    '-svdsoftmax_gpu_n', -1,
+    valid = onmt.utils.ExtendedCmdLine.isInt
   }
 }
 
@@ -383,7 +399,7 @@ function Translator:buildTargetWords(pred, src, attn, placeholders)
           tokens[i] = '｟unk:' .. source .. '｠'
         end
       end
-      if placeholders[tokens[i]] and self.args.placeholder_constraints then
+      if placeholders and placeholders[tokens[i]] and self.args.placeholder_constraints then
         tokens[i] = placeholders[tokens[i]]
       end
     end

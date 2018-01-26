@@ -73,6 +73,55 @@ function Generator.load(generator)
   return generator
 end
 
+function Generator:applySVDSoftmax()
+  -- replace nn.Linear with nn.SVDLinear
+  local svdReplaced = false
+  self:replace(function(module)
+    -- assume the first nn.Linear we find is for the main feature (token)
+    if torch.typename(module) == 'nn.Linear' and not svdReplaced then
+      local mod = nn.SVDLinear(module.weight:size(2), module.weight:size(1), module.bias ~= nil)
+      mod:load(module)
+      mod:doSVD()
+      mod:type(module._type)
+      _G.logger:info('nn.Linear ' .. tostring(module) .. ' replaced with ' .. tostring(mod))
+      svdReplaced = true
+      return mod
+    else
+      return module
+    end
+  end
+  )
+end
+
+function Generator:applySVDParam(W, N)
+  self:replace(
+    function(module)
+      if torch.typename(module) == 'nn.SVDLinear' then
+        module:setSVDParam(W, N)
+        _G.logger:info('Setting W, N of nn.SVDLinear ' .. tostring(module) .. ' to ' .. tostring(W) .. ' and ' .. tostring(N))
+      end
+      return module
+    end
+  )
+end
+
+function Generator:stopSVDSoftmax()
+  -- replace nn.SVDLinear with nn.Linear
+  self:replace(function(module)
+    if torch.typename(module) == 'nn.SVDLinear' then
+      local mod = nn.Linear(module.weight:size(2), module.weight:size(1), module.bias ~= nil)
+      mod.weight = module.weight
+      mod.bias = module.bias
+      mod:type(module._type)
+      _G.logger:info('nn.SVDLinear ' .. tostring(module) .. ' replaced with ' .. tostring(mod))
+      return mod
+    else
+      return module
+    end
+  end
+  )
+end
+
 function Generator:updateOutput(input)
   input = type(input) == 'table' and input[1] or input
   self.output = self.net:updateOutput(input)

@@ -147,6 +147,24 @@ function Seq2Seq.load(args, models, dicts)
   self.criterion = onmt.ParallelClassNLLCriterion(onmt.Factory.getOutputSizes(dicts.tgt))
   self.tgtVocabSize = dicts.tgt.words:size(1)
 
+  if onmt.utils.Cuda.activated and
+       args.svdsoftmax_gpu_w and args.svdsoftmax_gpu_w > 0
+       args.svdsoftmax_gpu_n and args.svdsoftmax_gpu_n > 0 then
+    _G.logger:info('Applying SVDSoftmax parameters (GPU) W=' .. tostring(args.svdsoftmax_gpu_w) .. ' and N=' .. tostring(args.svdsoftmax_gpu_n))
+    if self.models.decoder.generator.applySVDParam then
+      _G.logger:info('Calling applySVDParam')
+      self.models.decoder.generator:applySVDParam(args.svdsoftmax_gpu_w, args.svdsoftmax_gpu_n)
+    end
+  elseif not onmt.utils.Cuda.activated and
+       args.svdsoftmax_cpu_w and args.svdsoftmax_cpu_w > 0
+       args.svdsoftmax_cpu_n and args.svdsoftmax_cpu_n > 0 then
+    _G.logger:info('Applying SVDSoftmax parameters (CPU) W=' .. tostring(args.svdsoftmax_cpu_w) .. ' and N=' .. tostring(args.svdsoftmax_cpu_n))
+    if self.models.decoder.generator.applySVDParam then
+      _G.logger:info('Calling applySVDParam')
+      self.models.decoder.generator:applySVDParam(args.svdsoftmax_cpu_w, args.svdsoftmax_cpu_n)
+    end
+  end
+
   return self
 end
 

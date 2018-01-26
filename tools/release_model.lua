@@ -20,6 +20,10 @@ local options = {
   {
     '-force', false,
     [[Force output model creation even if the target file exists.]]
+  },
+  {
+    '-svdsoftmax', false,
+    [[]]
   }
 }
 
@@ -105,6 +109,14 @@ local function main()
     end
   end
   _G.logger:info('... done.')
+
+  if opt.svdsoftmax and
+     checkpoint.models and
+     checkpoint.models.decoder and
+     checkpoint.models.decoder.modules[2] and
+     checkpoint.models.decoder.modules[2].applySVDSoftmax then
+    checkpoint.models.decoder.modules[2]:applySVDSoftmax()
+  end
 
   _G.logger:info('Releasing model \'' .. opt.output_model .. '\'...')
   torch.save(opt.output_model, checkpoint)
