@@ -1,6 +1,6 @@
 local FileReader = torch.class("FileReader")
 
-function FileReader:__init(filename, idxSent, featSequence)
+function FileReader:__init(filename, idxSent, featSequence, isAudio)
   if filename == '-' then
     self.file = io.stdin
   else

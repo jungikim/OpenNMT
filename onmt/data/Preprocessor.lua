@@ -218,6 +218,7 @@ function Preprocessor.expandOpts(cmd, dataType)
   local pref = "{src,tgt}_"
   if dataType == "monotext" then pref = "" end
   if dataType == "feattext" then pref = "tgt_" end
+  if dataType == "audiotext" then pref = "tgt_"; require 'audio'; end
   for i, v in ipairs(cmd.helplines) do
     if type(v) == "string" then
       local p = v:find(" options")
@@ -707,7 +708,7 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
   -- iterate on each file
   for _m, _df in ipairs(files) do
     self:poolAddJob(
-      function(df, idx_files, time_shift_feature, src_seq_length, tgt_seq_length, sampling)
+      function(df, idx_files, audio_files, time_shift_feature, src_seq_length, tgt_seq_length, sampling)
         local count = 0
         local ignored = 0
         local emptyCount = 0
@@ -729,16 +730,19 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
         local readers = {}
         local prunedRatio = {}
         for i = 1, n do
-          table.insert(readers, onmt.utils.FileReader.new(df[2][i], idx_files, isInputVector[i]))
+          table.insert(readers, onmt.utils.FileReader.new(df[2][i], idx_files, isInputVector[i] and not audio_files)) -- audio_files contain file name instead of vector
           table.insert(prunedRatio, 0)
         end
 
-        if idx_files then
+        if idx_files or audio_files then
           local maps = {}
           for i = 1, n do
             table.insert(maps, {})
+            local cnt = 0
             while true do
               local tokens, idx = readers[i]:next()
+              cnt = cnt + 1
+              if not idx then idx = cnt end
               if not tokens then
                 break
               end
@@ -746,10 +750,23 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
                 return _G.__threadid, 1, string.format('duplicate idx in %s file: '..idx, nameSources[i])
               end
               if i > 1 and not maps[1][idx] then
+                print(tokens)
                 return _G.__threadid, 1, string.format('%s Idx not defined in %s: '..idx, nameSources[i], nameSources[1])
               end
               if isInputVector[i] then
-                maps[i][idx] = torch.Tensor(tokens)
+                if audio_files then
+                  local audioFile = audio.load(tokens[1])
+                  local spect = audio.spectrogram(audioFile, --[[windowSize * sampleRate --]] 0.02  * 16000, 'hamming', --[[stride * sampleRate --]] 0.01 * 16000)
+                  -- freq-by-frames tensor
+                  spect = spect:float()
+                  local mean = spect:mean()
+                  local std = spect:std()
+                  spect:add(-mean)
+                  spect:div(std)
+                  maps[i][idx] = spect:t() -- seqlength x feat size
+                else
+                  maps[i][idx] = torch.Tensor(tokens)
+                end
               else
                 maps[i][idx] = tokens
               end
@@ -930,7 +947,7 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
         gEmptyCount = gEmptyCount + emptyCount
 
       end,
-      _df, self.args.idx_files, self.args.time_shift_feature, self.args.src_seq_length or self.args.seq_length, self.args.tgt_seq_length, sample_file[_m])
+      _df, self.args.idx_files, self.dataType == 'audiotext', self.args.time_shift_feature, self.args.src_seq_length or self.args.seq_length, self.args.tgt_seq_length, sample_file[_m])
   end
 
   self:poolSynchronize()
@@ -1071,6 +1088,30 @@ function Preprocessor:makeFeatTextData(files, tgtDicts, sample_file)
   return data[1], data[2]
 end
 
+function Preprocessor:makeAudioTextData(files, tgtDicts, sample_file)
+  local data = self:makeGenericData(
+                              files,                       -- * `files`: table of data source name
+                              { true, false },             -- * `isInputVector`: table of boolean indicating if corresponding source is an vector
+                              { {}, tgtDicts },            -- * `dicts`: table of dictionary data corresponding to source
+                              { 'source', 'target' },      -- * `nameSources`: table of name of each source - for logging purpose
+                              {                            -- * `constants`: constant to add to the vocabulary for each source
+                                false,
+                                {
+                                  onmt.Constants.UNK_WORD,
+                                  onmt.Constants.BOS_WORD,
+                                  onmt.Constants.EOS_WORD
+                                }
+                              },
+                              validFeat,                   -- * `isValid`: validation function taking prepared table of tokens from each source
+                              {                            -- * `generateFeatures`: table of feature extraction fucnction for each source
+                                false,
+                                onmt.utils.Features.generateTarget
+                              },
+                              self.args.check_plength and self.parallelCheck, -- * `parallelCheck`: function to check parallely source/target(s)
+                              sample_file)                -- * `sample_file`: possible torch mapping vector
+  return data[1], data[2]
+end
+
 local function ValidMono(tokens, seq_length)
   return #tokens[1] > 0 and isValid(tokens[1], seq_length)
 end
@@ -1111,7 +1152,7 @@ function Preprocessor:getVocabulary()
   local dicts = {}
   -- use the first source file to count source features
   local src_file = self.list_train[1][2][1]
-  if self.dataType ~= 'feattext' then
+  if self.dataType ~= 'feattext' and self.dataType ~= 'audiotext' then
     dicts.src = onmt.data.Vocabulary.init('source',
                                      src_file,
                                      self.args.src_vocab or self.args.vocab,
@@ -1189,6 +1230,13 @@ function Preprocessor:makeData(dataset, dicts)
       data.src = self:makeMonolingualData(self["list_"..dataset], dicts.src, sample_file)
     elseif self.dataType == 'feattext' then
       data.src, data.tgt = self:makeFeatTextData(self["list_"..dataset], dicts.tgt, sample_file)
+      if not dicts.srcInputSize then
+        dicts.srcInputSize = data.src.vectors[1]:size(2)
+      else
+        onmt.utils.Error.assert(dicts.srcInputSize==data.src.vectors[1]:size(2), "feature size is not matching in all files")
+      end
+    elseif self.dataType == 'audiotext' then
+      data.src, data.tgt = self:makeAudioTextData(self["list_"..dataset], dicts.tgt, sample_file)
       if not dicts.srcInputSize then
         dicts.srcInputSize = data.src.vectors[1]:size(2)
       else
