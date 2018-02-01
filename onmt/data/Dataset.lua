@@ -1,6 +1,19 @@
 --[[ Data management and batch creation. Handles data created by `preprocess.lua`. ]]
 local Dataset = torch.class("Dataset")
 
+
+function Dataset.openDB_RO(path, name)
+  local db = lmdb.env {Path = path, Name = name}
+  db:open()
+  local txn = db:txn(true)
+  return db, txn
+end
+
+function Dataset.closeDB(db, txn)
+  txn:commit()
+  db:close()
+end
+
 --[[ Initialize a data object given aligned tables of IntTensors `srcData`
   and `tgtData`.
 --]]
@@ -10,10 +23,56 @@ function Dataset:__init(srcData, tgtData)
   self.srcFeatures = srcData.features
   self.constraints = srcData.constraints
 
+  if type(self.src) ~= 'table' and type(self.src) == 'string' then
+    require('lmdb')
+    self.src_db, self.src_db_txn = self.openDB_RO(self.src, self.src)
+    self.srcFeatures_db, self.srcFeatures_db_txn = self.openDB_RO(self.srcFeatures, self.srcFeatures)
+  end
+
   if tgtData ~= nil then
     self.tgt = tgtData.words or tgtData.vectors
     self.tgtFeatures = tgtData.features
+
+    if type(self.tgt) ~= 'table' and type(self.tgt) == 'string' then
+      self.tgt_db, self.tgt_db_txn = self.openDB_RO(self.tgt, self.tgt)
+      self.tgtFeatures_db, self.tgtFeatures_db_txn = self.openDB_RO(self.tgtFeatures, self.tgtFeatures)
+    end
   end
+end
+
+function Dataset:getSrc(i)
+  if self.src_db then
+    return self.src_db_txn:get(i)
+  end
+  return self.src[i]
+end
+
+function Dataset:getSrcFeature(i)
+  if self.srcFeatures_db and self.srcFeatures_db:stat()['entries'] >= i then
+    return self.srcFeatures_db_txn:get(i)
+  end
+  return self.srcFeatures[i]
+end
+
+function Dataset:getTgt(i)
+  if self.tgt_db then
+    return self.tgt_db_txn:get(i)
+  end
+  return self.tgt[i]
+end
+
+function Dataset:getTgtFeature(i)
+  if self.tgtFeatures_db and self.tgtFeatures_db:stat()['entries'] >= i then
+    return self.tgtFeatures_db_txn:get(i)
+  end
+  return self.tgtFeatures[i]
+end
+
+function Dataset:getSrcSize()
+  if self.src_db then
+    return self.src_db:stat()['entries']
+  end
+  return #self.src
 end
 
 --[[ Setup up the training data to respect `maxBatchSize`.
@@ -33,12 +92,12 @@ function Dataset:setBatchSize(maxBatchSize, uneven_batches)
   local maxSourceLength = 0
   local targetLength = 0
 
-  for i = 1, #self.src do
+  for i = 1, self:getSrcSize() do
     -- Set up the offsets to make same source size batches of the
     -- correct size.
-    local sourceLength = self.src[i]:size(1)
+    local sourceLength = self:getSrc(i):size(1)
     if batchSize == maxBatchSize or i == 1 or
-        (not(uneven_batches) and self.src[i]:size(1) ~= maxSourceLength) then
+        (not(uneven_batches) and sourceLength ~= maxSourceLength) then
       if i > 1 then
         batchesCapacity = batchesCapacity + batchSize * maxSourceLength
         table.insert(self.batchRange, { ["begin"] = offset, ["end"] = i - 1 })
@@ -58,7 +117,7 @@ function Dataset:setBatchSize(maxBatchSize, uneven_batches)
 
     if self.tgt ~= nil then
       -- Target contains <s> and </s>.
-      local targetSeqLength = self.tgt[i]:size(1) - 1
+      local targetSeqLength = self:getTgt(i):size(1) - 1
       targetLength = math.max(targetLength, targetSeqLength)
       self.maxTargetLength = math.max(self.maxTargetLength, targetSeqLength)
     end
@@ -66,14 +125,14 @@ function Dataset:setBatchSize(maxBatchSize, uneven_batches)
 
   -- Catch last batch.
   batchesCapacity = batchesCapacity + batchSize * maxSourceLength
-  table.insert(self.batchRange, { ["begin"] = offset, ["end"] = #self.src })
+  table.insert(self.batchRange, { ["begin"] = offset, ["end"] = self:getSrcSize() })
   return #self.batchRange, batchesOccupation/batchesCapacity
 end
 
 --[[ Return number of batches. ]]
 function Dataset:batchCount()
   if self.batchRange == nil then
-    if #self.src > 0 then
+    if self:getSrcSize() > 0 then
       return 1
     else
       return 0
@@ -83,21 +142,17 @@ function Dataset:batchCount()
 end
 
 function Dataset:instanceCount()
-  return #self.src
+  return self:getSrcSize()
 end
 
 --[[ Get `Batch` number `idx`. If nil make a batch of all the data. ]]
 function Dataset:getBatch(idx)
-  if #self.src == 0 then
+  if self:getSrcSize() == 0 then
     return nil
   end
 
-  if idx == nil or self.batchRange == nil then
-    return onmt.data.Batch.new(self.src, self.srcFeatures, self.tgt, self.tgtFeatures, self.constraints)
-  end
-
-  local rangeStart = self.batchRange[idx]["begin"]
-  local rangeEnd = self.batchRange[idx]["end"]
+  local rangeStart = (idx and self.batchRange) and self.batchRange[idx]["begin"] or 1
+  local rangeEnd = (idx and self.batchRange) and self.batchRange[idx]["end"] or self:getSrcSize()
 
   local src = {}
   local tgt
@@ -112,17 +167,17 @@ function Dataset:getBatch(idx)
   local constraints = {}
 
   for i = rangeStart, rangeEnd do
-    table.insert(src, self.src[i])
+    table.insert(src, self:getSrc(i))
 
-    if self.srcFeatures[i] then
-      table.insert(srcFeatures, self.srcFeatures[i])
+    if self:getSrcFeature(i) then
+      table.insert(srcFeatures, self:getSrcFeature(i))
     end
 
     if self.tgt ~= nil then
-      table.insert(tgt, self.tgt[i])
+      table.insert(tgt, self:getTgt(i))
 
-      if self.tgtFeatures[i] then
-        table.insert(tgtFeatures, self.tgtFeatures[i])
+      if self:getTgtFeature(i) then
+        table.insert(tgtFeatures, self:getTgtFeature(i))
       end
     end
 

@@ -50,7 +50,17 @@ function SampledVocabDataset:sampleVocabInit(opt, src, tgt)
     if self.vocabIndex then
       _G.logger:info(' * with ' .. self.vocabAxisName .. ' vocabulary importance sampling')
     end
+    if type(self.vocabAxis) ~= 'table' and type(self.vocabAxis) == 'string' then
+      self.vocabAxis_db, self.vocabAxis_db_txn = self.openDB_RO(self.vocabAxis, self.vocabAxis)
+    end
   end
+end
+
+function SampledVocabDataset:getVocabAxis(i)
+  if self.vocabAxis_db and self.vocabAxis_db:stat()['entries'] >= i then
+    return self.vocabAxis_db_txn:get(i)
+  end
+  return self.vocabAxis[i]
 end
 
 function SampledVocabDataset:sampleVocabLog()
@@ -67,10 +77,10 @@ end
 
 function SampledVocabDataset:selectVocabs(sampled)
   if self.vocabIndex then
-    for j = 1, self.vocabAxis[sampled]:size(1) do
-      if not self.vocabIndex[self.vocabAxis[sampled][j]] then
-        self.vocabIndex[self.vocabAxis[sampled][j]] = 1
-        table.insert(self.vocabTensor, self.vocabAxis[sampled][j])
+    for j = 1, self:getVocabAxis(sampled):size(1) do
+      if not self.vocabIndex[self:getVocabAxis(sampled)[j]] then
+        self.vocabIndex[self:getVocabAxis(sampled)[j]] = 1
+        table.insert(self.vocabTensor, self:getVocabAxis(sampled)[j])
       end
     end
   end

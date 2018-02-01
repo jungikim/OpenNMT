@@ -137,7 +137,7 @@ function SeqTagger.dataType(datatype)
   if not datatype then
     return 'bitext'
   else
-    return datatype == 'bitext' or datatype == 'feattext'
+    return datatype == 'bitext' or datatype == 'feattext' or datatype == 'audiotext'
   end
 end
 

@@ -49,7 +49,7 @@ function SampledDataset:__init(opt, srcData, tgtData)
   self.sample_perplexity_max = opt.sample_perplexity_max
   self.startedPplSampling = false
 
-  _G.logger:info(' * sampling ' .. opt.sample .. ' instances from ' .. #self.src .. ' at each epoch')
+  _G.logger:info(' * sampling ' .. opt.sample .. ' instances from ' .. self:getSrcSize() .. ' at each epoch')
   self:sampleVocabInit(opt, self.src, self.tgt)
 
   if opt.sample_type == 'perplexity' then
@@ -59,30 +59,30 @@ function SampledDataset:__init(opt, srcData, tgtData)
   end
 
   if self.sample_type == 'perplexity' then
-    self.samplingProb = torch.Tensor(#self.src)
+    self.samplingProb = torch.Tensor(self:getSrcSize())
     self.samplingProb:fill(self.sample_perplexity_init)
-    self.ppl = torch.Tensor(#self.src)
+    self.ppl = torch.Tensor(self:getSrcSize())
     self.ppl:fill(self.sample_perplexity_init)
   elseif self.sample_type == 'partition' then
     self.partitionStart = 1
     self.partitionIdx = 1
-    self.partitionStep = math.floor(#self.src/self.samplingSize)
+    self.partitionStep = math.floor(self:getSrcSize()/self.samplingSize)
     if self.partitionStep == 0 then
       self.partitionStep = 1
     end
   else
-    self.samplingProb = torch.ones(#self.src)
+    self.samplingProb = torch.ones(self:getSrcSize())
   end
 
   self.sampled = nil
-  self.sampledCnt = torch.zeros(#self.src)
+  self.sampledCnt = torch.zeros(self:getSrcSize())
 end
 
 function SampledDataset:checkModel(model)
   if self:needIndividualLosses() and (not model.returnIndividualLosses or model:returnIndividualLosses(true) == false) then
     _G.logger:info('Current model does not support training with invididual losses; Sampling with individual loss will be disabled.')
     self.sample_type = 'uniform'
-    self.samplingProb = torch.ones(#self.src)
+    self.samplingProb = torch.ones(self:getSrcSize())
     self.ppl = nil
   else
     if model.returnIndividualLosses then
@@ -212,11 +212,11 @@ function SampledDataset:sample(logLevel)
   local sampleCntBegin = 1
   local batchSize = 1
   local maxSourceLength = -1
-  for i = 1, #self.src do
+  for i = 1, self:getSrcSize() do
     for j = 1, self.sampledCnt[i] do
-      local sourceLength = self.src[i]:size(1)
+      local sourceLength = self:getSrc(i):size(1)
       if batchSize == self.maxBatchSize or offset == 1 or
-         (not(self.uneven_batches) and self.src[i]:size(1) ~= maxSourceLength) then
+         (not(self.uneven_batches) and self:getSrc(i):size(1) ~= maxSourceLength) then
         if offset > 0 then
           batchesCapacity = batchesCapacity + batchSize * maxSourceLength
           local batchEnd = (j == 1) and i - 1 or i
@@ -240,13 +240,13 @@ function SampledDataset:sample(logLevel)
     end
   end
   -- Catch last batch.
-  if offset < #self.src then
+  if offset < self:getSrcSize() then
     batchesCapacity = batchesCapacity + batchSize * maxSourceLength
     table.insert(self.batchRange, {
       ["begin"] = offset,
-      ["end"] = #self.src,
+      ["end"] = self:getSrcSize(),
       ["sampleCntBegin"] = sampleCntBegin,
-      ["sampleCntEnd"] = self.sampledCnt[#self.src]
+      ["sampleCntEnd"] = self.sampledCnt[self:getSrcSize()]
     })
   end
 
@@ -287,11 +287,11 @@ function SampledDataset:setBatchSize(maxBatchSize, uneven_batches)
   self.maxSourceLength = 0
   self.maxTargetLength = 0
 
-  for i = 1, #self.src do
-    self.maxSourceLength = math.max(self.maxSourceLength, self.src[i]:size(1))
+  for i = 1, self:getSrcSize() do
+    self.maxSourceLength = math.max(self.maxSourceLength, self:getSrc(i):size(1))
     if self.tgt ~= nil then
       -- Target contains <s> and </s>.
-      local targetSeqLength = self.tgt[i]:size(1) - 1
+      local targetSeqLength = self:getTgt(i):size(1) - 1
       self.maxTargetLength = math.max(self.maxTargetLength, targetSeqLength)
     end
   end
@@ -310,11 +310,11 @@ end
 
 --[[ Get `Batch` number `idx`. If nil make a batch of all the data. ]]
 function SampledDataset:getBatch(batchIdx)
-  if #self.src == 0 then
+  if self:getSrcSize() == 0 then
     return nil
   end
   if batchIdx == nil or self.batchRange == nil then
-    return onmt.data.Batch.new(self.src, self.srcFeatures, self.tgt, self.tgtFeatures)
+    return parent.getBatch(self, batchIdx)
   end
 
   assert(self:batchCount() >= batchIdx, "Batch idx out of range: " .. batchIdx .. "/" .. self:batchCount())
@@ -337,16 +337,16 @@ function SampledDataset:getBatch(batchIdx)
     local jBegin = (i == rangeStart) and sampleCntBegin or 1
     local jEnd = (i == rangeEnd) and math.min(self.sampledCnt[i], sampleCntEnd) or self.sampledCnt[i]
     for _ = jBegin, jEnd do
-      local srcIdx = self:sampleVocabIdx('source', self.src[i])
+      local srcIdx = self:sampleVocabIdx('source', self:getSrc(i))
       table.insert(src, srcIdx)
-      if self.srcFeatures[i] then
-        table.insert(srcFeatures, self.srcFeatures[i])
+      if self:getSrcFeature(i) then
+        table.insert(srcFeatures, self:getSrcFeature(i))
       end
       if self.tgt ~= nil then
-        local tgtIdx = self:sampleVocabIdx('target', self.tgt[i])
+        local tgtIdx = self:sampleVocabIdx('target', self:getTgt(i))
         table.insert(tgt, tgtIdx)
-        if self.tgtFeatures[i] then
-          table.insert(tgtFeatures, self.tgtFeatures[i])
+        if self:getTgtFeature(i) then
+          table.insert(tgtFeatures, self:getTgtFeature(i))
         end
       end
     end
