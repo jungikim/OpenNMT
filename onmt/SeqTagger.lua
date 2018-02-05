@@ -107,7 +107,7 @@ function SeqTagger.load(args, models, dicts)
   self.models.encoder = onmt.Factory.loadEncoder(models.encoder)
   self.models.generator = onmt.Factory.loadGenerator(models.generator)
 
-  onmt.utils.Error.assert(args.loglikelihood == 'word' or args.loglikelihood == 'sentence',
+  onmt.utils.Error.assert(args.loglikelihood == 'word' or args.loglikelihood == 'sentence' or args.loglikelihood == 'ctc',
                                   'Invalid loglikelihood type of SeqTagger `%s\'', args.loglikelihood)
 
   if args.loglikelihood == 'word' then
@@ -127,6 +127,7 @@ function SeqTagger.load(args, models, dicts)
     self.models.criterion = self.criterion
     self.loglikelihood = 'sentence'
   elseif args.loglikelihood == 'ctc' then
+    require 'nnx'
     self.criterion = nn.CTCCriterion(--[[batchFirst]] true) -- with batchFirst, expects B x seqLen x dim as input
     self.loglikelihood = 'ctc'
   end
@@ -361,8 +362,33 @@ function SeqTagger:tagBatch(batch)
     --    print('tagsScores: ' .. tostring(tagsScores))
     --    print('batch.sourceSize: ' .. tostring(batch.sourceSize))
 
-    --    if ctcdecode == nil then require 'ctcdecode' end
-    --    @TODO
+    if ctcdecode == nil then ctcdecode = require 'ctcdecode' end
+    local nBest = 3
+    local decoder = ctcdecode.BeamSearchDecoder(
+      tagsScores:size(3),
+      10 * nBest,
+      ctcdecode.DefaultBeamScorer(),
+      1,
+      false
+    )
+
+    for b = 1, batch.size do
+      -- expects tagsScores to be seqLen x B x tagSize
+      local outputs, alignments, pathLen, scores = decoder:decode(tagsScores[{{b},{batch.sourceLength - batch.sourceSize[b] + 1, batch.sourceLength},{}}]:transpose(1,2), nBest, torch.IntTensor({batch.sourceSize[b]}))
+      for t = 1, pathLen[1][--[[Best]] 1] do
+        pred[b][t] = outputs[1][--[[Best]] 1][t]
+        feats[b][t] = {}
+      end
+    end
+
+-- TODO: batched decoding gives different result due to left-padded source?
+--    local outputs, alignments, pathLen, scores = decoder:decode(tagsScores:transpose(1,2), nBest, batch.sourceSize:type('torch.IntTensor'))
+--    for b = 1, batch.size do
+--      for t = 1, pathLen[b][--[[Best]] 1] do
+--        pred[b][t] = outputs[b][--[[Best]] 1][t]
+--        feats[b][t] = {}
+--      end
+--    end
 
   else -- 'word'
     for t = 1, batch.sourceLength do

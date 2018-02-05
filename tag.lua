@@ -44,7 +44,7 @@ local function main()
 
   local tagger = onmt.tagger.Tagger.new(opt)
 
-  local srcReader = onmt.utils.FileReader.new(opt.src, opt.idx_files, tagger:srcFeat())
+  local srcReader = onmt.utils.FileReader.new(opt.src, opt.idx_files, tagger:srcFeat() and tagger.model.loglikelihood ~= 'ctc')
   local srcBatch = {}
   local srcIdBatch = {}
 
@@ -69,7 +69,7 @@ local function main()
   end
 
   while true do
-    local srcTokens, srcSeqId = srcReader:next()
+    local srcTokens, srcSeqId = srcReader:next((tagger.model.loglikelihood ~= 'ctc'))
 
     local goldOutputTokens
     if withGoldScore then
