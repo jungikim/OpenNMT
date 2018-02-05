@@ -755,15 +755,7 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
               end
               if isInputVector[i] then
                 if audio_files then
-                  local audioFile = audio.load(tokens[1])
-                  local spect = audio.spectrogram(audioFile, --[[windowSize * sampleRate --]] 0.02  * 16000, 'hamming', --[[stride * sampleRate --]] 0.01 * 16000)
-                  -- freq-by-frames tensor
-                  spect = spect:float()
-                  local mean = spect:mean()
-                  local std = spect:std()
-                  spect:add(-mean)
-                  spect:div(std)
-                  maps[i][idx] = spect:t() -- seqlength x feat size
+                  maps[i][idx] = onmt.data.Audio.getSpectrogram(tokens[1], 0.02, 0.01, 16000)
                 else
                   maps[i][idx] = torch.Tensor(tokens)
                 end

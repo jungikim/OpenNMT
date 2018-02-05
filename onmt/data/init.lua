@@ -10,5 +10,6 @@ data.Batch = require('onmt.data.Batch')
 data.BatchTensor = require('onmt.data.BatchTensor')
 data.Vocabulary = require('onmt.data.Vocabulary')
 data.Preprocessor = require('onmt.data.Preprocessor')
+data.Audio = require('onmt.data.Audio')
 
 return data
