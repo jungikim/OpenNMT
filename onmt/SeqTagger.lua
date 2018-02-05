@@ -56,7 +56,7 @@ local options = {
     'word' indicates tags are predicted at the word-level, and
     'sentence' indicates tagging process is treated as a markov chain]],
     {
-      enum = {'word', 'sentence'},
+      enum = {'word', 'sentence', 'ctc'},
       structural = 1
     }
   }
@@ -81,16 +81,20 @@ function SeqTagger:__init(args, dicts)
   self.models.encoder = onmt.Factory.buildWordEncoder(args, dicts.src)
   self.models.generator = onmt.Factory.buildGenerator(args, dicts.tgt)
 
-  onmt.utils.Error.assert(args.loglikelihood == 'word' or args.loglikelihood == 'sentence',
+  onmt.utils.Error.assert(args.loglikelihood == 'word' or args.loglikelihood == 'sentence' or args.loglikelihood == 'ctc',
     'Invalid loglikelihood type of SeqTagger `%s\'', args.loglikelihood)
 
   self.loglikelihood = args.loglikelihood
+  _G.logger:info('SeqTagger loglikelihood: ' .. self.loglikelihood)
 
   if self.loglikelihood == 'word' then
     self.criterion = onmt.ParallelClassNLLCriterion(onmt.Factory.getOutputSizes(dicts.tgt))
   elseif self.loglikelihood == 'sentence' then
     self.criterion = onmt.SentenceNLLCriterion(args, onmt.Factory.getOutputSizes(dicts.tgt))
     self.models.criterion = self.criterion -- criterion is model parameter
+  elseif self.loglikelihood == 'ctc' then
+    require 'nnx'
+    self.criterion = nn.CTCCriterion(--[[batchFirst]] true) -- with batchFirst, expects B x seqLen x dim as input
   end
 end
 
@@ -122,6 +126,9 @@ function SeqTagger.load(args, models, dicts)
     end
     self.models.criterion = self.criterion
     self.loglikelihood = 'sentence'
+  elseif args.loglikelihood == 'ctc' then
+    self.criterion = nn.CTCCriterion(--[[batchFirst]] true) -- with batchFirst, expects B x seqLen x dim as input
+    self.loglikelihood = 'ctc'
   end
 
   return self
@@ -152,7 +159,7 @@ function SeqTagger:getOutput(batch)
 end
 
 function SeqTagger:forwardComputeLoss(batch)
-  local _, context = self.models.encoder:forward(batch)
+  local _, context = self.models.encoder:forward(batch) -- B x SeqLen x dim
 
   local loss = 0
 
@@ -167,6 +174,27 @@ function SeqTagger:forwardComputeLoss(batch)
     end
     local tagsScores = nn.JoinTable(3):forward(tagsScoreTable)  -- B x TagSize x SeqLen
     loss = self.models.criterion:forward(tagsScores, reference)
+
+  elseif self.loglikelihood == 'ctc' then
+
+    local tagsScoreTable = {}
+    for t = 1, batch.sourceLength do
+      local tagsScore = self.models.generator:forward(context:select(2, t)) -- B x TagSize
+      -- tagsScore is a table
+      tagsScore = nn.utils.addSingletonDimension(tagsScore[1], 2):clone() -- B x 1 x TagSize
+      table.insert(tagsScoreTable, tagsScore)
+    end
+    local tagsScores = nn.JoinTable(2):forward(tagsScoreTable):type(torch.type(context)) -- B x SeqLen x TagSize
+
+    local reference = batch.targetOutput:t() -- SeqLen x B -> B x SeqLen
+
+    local refTable = {}
+    for bIdx = 1, batch.size do
+      table.insert(refTable,torch.totable(reference[{{bIdx},{1, batch.targetSize[bIdx]-1}}][1]:clone():float()))
+    end
+
+    loss = self.criterion:forward(tagsScores, refTable, batch.sourceSize:float())
+
   else -- 'word'
     for t = 1, batch.sourceLength do
       local genOutputs = self.models.generator:forward(context:select(2, t))
@@ -214,6 +242,42 @@ function SeqTagger:trainNetwork(batch)
       gradContexts:select(2,t):copy(self.models.generator:backward(context:select(2, t), {gradCriterion:select(3,t)}))
     end
 
+  elseif self.loglikelihood == 'ctc' then
+
+    local tagsScoreTable = {}
+    for t = 1, batch.sourceLength do
+      local tagsScore = self.models.generator:forward(context:select(2, t)) -- B x TagSize
+      -- tagsScore is a table
+      tagsScore = nn.utils.addSingletonDimension(tagsScore[1], 2):clone() -- B x 1 x TagSize
+      table.insert(tagsScoreTable, tagsScore)
+    end
+    local tagsScores = nn.JoinTable(2):forward(tagsScoreTable):type(torch.type(context)) -- B x SeqLen x TagSize
+
+    local reference = batch.targetOutput:t() -- SeqLen x B -> B x SeqLen
+
+    local refTable = {}
+    for bIdx = 1, batch.size do
+      table.insert(refTable,torch.totable(reference[{{bIdx},{1, batch.targetSize[bIdx]-1}}][1]:clone():float()))
+    end
+
+    --    print('tagsScores: ' .. tostring(tagsScores))
+    --    print('refTable: ')
+    --    for bIdx = 1, batch.size do
+    --      print(refTable[bIdx])
+    --    end
+    --    print('batch.sourceSize: ' .. tostring(batch.sourceSize))
+
+    loss = self.criterion:forward(tagsScores, refTable, batch.sourceSize:float())
+
+    --    print('Loss: ' .. tostring(loss))
+
+    local gradCriterion = self.criterion:backward(tagsScores, refTable)
+
+    gradCriterion = torch.div(gradCriterion, batch.size)
+    for t = 1, batch.sourceLength do
+      gradContexts:select(2,t):copy(self.models.generator:backward(context:select(2, t), {gradCriterion:select(2,t)}))
+    end
+
   else -- 'word'
     -- For each word of the sentence, generate target.
     for t = 1, batch.sourceLength do
@@ -225,7 +289,6 @@ function SeqTagger:trainNetwork(batch)
       if torch.type(output) ~= 'table' then output = { output } end
 
       loss = loss + self.criterion:forward(genOutputs, output)
-
       local genGradOutput = self.criterion:backward(genOutputs, output)
 
       for j = 1, #genGradOutput do
@@ -274,6 +337,32 @@ function SeqTagger:tagBatch(batch)
         end
       end
     end
+
+  elseif self.loglikelihood == 'ctc' then
+
+    local tagsScoreTable = {}
+    for t = 1, batch.sourceLength do
+      local tagsScore = self.models.generator:forward(context:select(2, t)) -- B x TagSize
+      -- tagsScore is a table
+      tagsScore = nn.utils.addSingletonDimension(tagsScore[1], 2):clone() -- B x 1 x TagSize
+      table.insert(tagsScoreTable, tagsScore)
+    end
+    local tagsScores = nn.JoinTable(2):forward(tagsScoreTable) -- B x SeqLen x TagSize
+
+    local tagsScoreTable = {}
+    for t = 1, batch.sourceLength do
+      local tagsScore = self.models.generator:forward(context:select(2, t)) -- B x TagSize
+      -- tagsScore is a table
+      tagsScore = nn.utils.addSingletonDimension(tagsScore[1], 2):clone() -- B x 1 x TagSize
+      table.insert(tagsScoreTable, tagsScore)
+    end
+    local tagsScores = nn.JoinTable(2):forward(tagsScoreTable):type(torch.type(context)) -- B x SeqLen x TagSize
+
+    --    print('tagsScores: ' .. tostring(tagsScores))
+    --    print('batch.sourceSize: ' .. tostring(batch.sourceSize))
+
+    --    if ctcdecode == nil then require 'ctcdecode' end
+    --    @TODO
 
   else -- 'word'
     for t = 1, batch.sourceLength do
