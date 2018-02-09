@@ -5,7 +5,7 @@ local options = {
     '-encoder_type', 'rnn',
     [[Encoder type.]],
     {
-      enum = { 'rnn', 'brnn', 'dbrnn', 'pdbrnn', 'gnmt', 'cnn' },
+      enum = { 'rnn', 'brnn', 'dbrnn', 'pdbrnn', 'gnmt', 'cnn', 'ds2' },
       structural = 0,
       depends = function(opt)
                   if opt.encoder_type == 'cnn' then
@@ -196,6 +196,8 @@ function Factory.buildEncoder(opt, inputNetwork)
   elseif opt.encoder_type == 'cnn' then
     describeEncoder('CNN')
     return onmt.CNNEncoder.new(opt, inputNetwork)
+  elseif opt.encoder_type == 'ds2' then
+    return onmt.DeepSpeech2Encoder.new(opt, inputNetwork)
   else
     describeEncoder('unidirectional RNN')
     return onmt.Encoder.new(opt, inputNetwork)
@@ -228,6 +230,8 @@ function Factory.loadEncoder(pretrained)
     encoder = onmt.GoogleEncoder.load(pretrained)
   elseif pretrained.name == 'CNNEncoder' then
     encoder = onmt.CNNEncoder.load(pretrained)
+  elseif pretrained.name == 'DeepSpeech2Encoder' then
+    encoder = onmt.DeepSpeech2Encoder.load(pretrained)
   else
     -- Keep for backward compatibility.
     local brnn = #pretrained.modules == 2
