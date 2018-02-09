@@ -270,7 +270,13 @@ local function loadModel(opt, dicts)
       _G.logger:info(' * Replacing old dictionaries by new dictionaries...')
     end
     checkpoint = updateVocab(checkpoint, dicts, opt)
-  elseif checkpoint.dicts.src.words:size() ~= dicts.src.words:size() or checkpoint.dicts.tgt.words:size() ~= dicts.tgt.words:size() then
+  elseif (checkpoint.dicts and checkpoint.dicts.src and checkpoint.dicts.src.words and
+        dicts and dicts.src and dicts.src.words and
+        checkpoint.dicts.src.words:size() ~= dicts.src.words:size())
+       or
+       (checkpoint.dicts and checkpoint.dicts.tgt and checkpoint.dicts.tgt.words and
+        dicts and dicts.tgt and dicts.tgt.words and
+        checkpoint.dicts.tgt.words:size() ~= dicts.tgt.words:size()) then
     _G.logger:warning('Dictionary size changed, you may need to activate -update_vocab option')
   end
 
