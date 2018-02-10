@@ -71,6 +71,16 @@ local commonOptions = {
     {
       valid = onmt.utils.ExtendedCmdLine.isInt(1)
     }
+  },
+  {
+    '-lmdb', false,
+    [[Store data instances in LMDB]],
+    {
+      depends = function(opt)
+                  return opt.lmdb == false or (opt.sort == false and opt.shuffle == false and opt.preprocess_pthreads == 1),
+                         "option `lmdb` requires `sort`=false, `shuffle`=false, `preprocess_pthreads`=1"
+                end
+    }
   }
 }
 
@@ -619,7 +629,7 @@ end
 --[[ Process on given tokenized sentence - check for validity and prepare structure ]]
 local function processSentence(n, idx, tokens, parallelCheck, isValid, isInputVector, dicts,
                                constants, prunedRatio, generateFeatures, time_shift_feature,
-                               sentenceDists, vectors, features, avgLength, sizes,
+                               sentenceDists, vectors, features, avgLength, sizes, allSizes,
                                src_seq_length, tgt_seq_length)
   local ignored = 0
 
@@ -640,8 +650,9 @@ local function processSentence(n, idx, tokens, parallelCheck, isValid, isInputVe
 
   if valid and isValid(tokens, src_seq_length, tgt_seq_length) then
     for i = 1, n do
+
       local length = (type(tokens[i])=='table' and #tokens[i]) or (tokens[i]:dim()==0 and 0) or tokens[i]:size(1)
-      avgLength[i] = avgLength[i] * (#vectors[i] / (#vectors[i] + 1)) + length / (#vectors[i] + 1)
+      avgLength[i] = avgLength[i] * (#allSizes[i] / (#allSizes[i] + 1)) + length / (#allSizes[i] + 1)
 
       if isInputVector[i] then
         vectors[i]:insert(tokens[i])
@@ -651,7 +662,7 @@ local function processSentence(n, idx, tokens, parallelCheck, isValid, isInputVe
         local vec = dicts[i].words:convertToIdx(vocabs, table.unpack(constants[i]))
         local pruned = vec:eq(onmt.Constants.UNK):sum() / vec:size(1)
 
-        prunedRatio[i] = prunedRatio[i] * (#vectors[i] / (#vectors[i] + 1)) + pruned / (#vectors[i] + 1)
+        prunedRatio[i] = prunedRatio[i] * (#allSizes[i] / (#allSizes[i] + 1)) + pruned / (#allSizes[i] + 1)
         vectors[i]:insert(vec)
 
         if not(isInputVector[i]) and #dicts[i].features > 0 then
@@ -662,6 +673,7 @@ local function processSentence(n, idx, tokens, parallelCheck, isValid, isInputVe
       if i == 1 then
         sizes:insert(length)
       end
+      allSizes[i]:insert(length)
     end
   else
     ignored = 1
@@ -669,6 +681,26 @@ local function processSentence(n, idx, tokens, parallelCheck, isValid, isInputVe
 
   return ignored
 end
+
+local function openDB_RW(path)
+  local db = lmdb.env {Path = path}
+  db:open()
+  local txn = db:txn()
+  return db, txn
+end
+
+local function openDB_RO(path)
+  local db = lmdb.env {Path = path}
+  db:open()
+  local txn = db:txn(true)
+  return db, txn
+end
+
+local function closeDB(db, txn)
+  txn:commit()
+  db:close()
+end
+
 
 --[[
   Generic data preparation function on multiples source
@@ -683,16 +715,21 @@ end
   * `sample_file`: possible torch mapping vector
 ]]
 function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, constants,
-                                      isValid, generateFeatures, parallelCheck, sample_file)
+                                      isValid, generateFeatures, parallelCheck, sample_file, dbNames)
   local verbose = _G.logger.level == 'DEBUG'
   sample_file = sample_file or {}
   local n = #files[1][2]
+
+  if dbNames then
+    onmt.utils.Error.assert(#dbNames == n, "Incorrect number of DB names (" .. tostring(dbNames) .. ") provided; should be ".. tostring(n))
+  end
 
   local gSentenceDists = {}
   local gVectors = {}
   local gFeatures = {}
   local gAvgLength = {}
   local gSizes = tds.Vec()
+  local gAllSizes = {}
 
   local gCount = 0
   local gIgnored = 0
@@ -703,12 +740,13 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
     table.insert(gVectors, tds.Vec())
     table.insert(gFeatures, tds.Vec())
     table.insert(gAvgLength, 0)
+    table.insert(gAllSizes, tds.Vec())
   end
 
   -- iterate on each file
   for _m, _df in ipairs(files) do
     self:poolAddJob(
-      function(df, idx_files, audio_files, time_shift_feature, src_seq_length, tgt_seq_length, sampling)
+      function(df, idx_files, audio_files, time_shift_feature, src_seq_length, tgt_seq_length, sampling, dbNames)
         local count = 0
         local ignored = 0
         local emptyCount = 0
@@ -718,6 +756,23 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
         local features = {}
         local avgLength = {}
         local sizes = _G.tds.Vec()
+        local allSizes = {}
+        for i = 1, n do allSizes[i] = _G.tds.Vec() end
+
+        local tmpDbNames = nil
+        local db_main={}
+        local txn_main={}
+        local db_feat={}
+        local txn_feat={}
+        if dbNames and #dbNames > 0 then
+          tmpDbNames = {}
+          for i=1,n do
+            table.insert(tmpDbNames, dbNames[i]..'-'.._G.__threadid)
+            db_main[i], txn_main[i] = openDB_RW(tmpDbNames[i]..'-main-'..tostring(i))
+            db_feat[i], txn_feat[i] = openDB_RW(tmpDbNames[i]..'-feat-'..tostring(i))
+          end
+        end
+        local instanceId = 0
 
         for _ = 1, n do
           table.insert(sentenceDists, { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
@@ -734,52 +789,69 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
           table.insert(prunedRatio, 0)
         end
 
+        --[[ if idx_files, indices in all files must have same order ]]
         if idx_files or audio_files then
-          local maps = {}
-          for i = 1, n do
-            table.insert(maps, {})
-            local cnt = 0
-            while true do
+          while true do
+            local instance = {}
+            local gIdx = nil; local endOfFile = false; local indices = {}
+            --[[retrieve a instance of n-parallel tuple]]
+            for i = 1, n do
               local tokens, idx = readers[i]:next()
-              cnt = cnt + 1
-              if not idx then idx = cnt end
-              if not tokens then
-                break
+              if not tokens then endOfFile = true; break end
+              if idx_files then
+                if gIdx then
+                  if gIdx ~= idx then
+                    return _G.__threadid, 1, string.format('%s Idx not defined in %s: '..idx, nameSources[i], nameSources[1])
+                  end
+                else
+                  gIdx = idx
+                end
               end
-              if maps[i][idx] then
-                return _G.__threadid, 1, string.format('duplicate idx in %s file: '..idx, nameSources[i])
-              end
-              if i > 1 and not maps[1][idx] then
-                print(tokens)
-                return _G.__threadid, 1, string.format('%s Idx not defined in %s: '..idx, nameSources[i], nameSources[1])
-              end
+              if idx_files then indices[gIdx] = true end
+
               if isInputVector[i] then
                 if audio_files then
-                  maps[i][idx] = onmt.data.Audio.getSpectrogram(tokens[1], 0.02, 0.01, 16000)
+                  instance[i] = onmt.data.Audio.getSpectrogram(tokens[1], 0.02, 0.01, 16000)
                 else
-                  maps[i][idx] = torch.Tensor(tokens)
+                  instance[i] = torch.Tensor(tokens)
                 end
               else
-                maps[i][idx] = tokens
+                instance[i] = tokens
               end
             end
-          end
-          for k,_ in pairs(maps[1]) do
-            local tokens = {}
-            local hasNil = false
-            for i = 1, n do
-              hasNil = hasNil or maps[i][k] == nil
-              table.insert(tokens, maps[i][k])
+
+            if indices[gIdx] then
+              return _G.__threadid, 1, string.format('duplicate idx in %s file: '..gIdx, nameSources[i])
             end
-            if not hasNil then
-              ignored = ignored + processSentence(n, k, tokens, parallelCheck, isValid, isInputVector, dicts,
-                                                  constants, prunedRatio, generateFeatures, time_shift_feature,
-                                                  sentenceDists, vectors, features, avgLength, sizes,
-                                                  src_seq_length, tgt_seq_length)
-              count = count + 1
-            else
-              emptyCount = emptyCount + 1
-            end
+
+            if endOfFile then break end
+
+            ignored = ignored + processSentence(n, instanceId, instance, parallelCheck, isValid, isInputVector, dicts,
+                                                constants, prunedRatio, generateFeatures, time_shift_feature,
+                                                sentenceDists, vectors, features, avgLength, sizes, allSizes,
+                                                src_seq_length, tgt_seq_length)
+
+              --[[ move one instance tuple that was just created from above function processSentenece into lmdb ]]
+              if tmpDbNames and #tmpDbNames > 0 and #vectors[1] > 0 then
+                instanceId = instanceId + 1
+                for i=1, n do
+                  txn_main[i]:put(instanceId, vectors[i][1])
+                  vectors[i]:remove(1)
+                  if features[i] and #features[i] > 0 then
+                    txn_feat[i]:put(instanceId, features[i][1])
+                    features[i]:remove(1)
+                  end
+                end
+                if instanceId % 500 == 0 then
+                  for i=1, n do
+                    txn_main[i]:commit(); txn_main[i] = db_main[i]:txn()
+                    txn_feat[i]:commit(); txn_feat[i] = db_feat[i]:txn()
+                  end
+                  collectgarbage()
+                end
+              end
+
+            count = count + 1
           end
         else
           local idx = 1
@@ -888,9 +960,29 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
                 for _ = 1, sentences[1][j] do
                   ignored = ignored + processSentence(n, idx, tokens, parallelCheck, isValid, isInputVector, dicts,
                                                           constants, prunedRatio, generateFeatures, time_shift_feature,
-                                                          sentenceDists, vectors, features, avgLength, sizes,
+                                                          sentenceDists, vectors, features, avgLength, sizes, allSizes,
                                                           src_seq_length, tgt_seq_length)
                   count = count + 1
+
+                  --[[ move one instance tuple that was just created from above function processSentenece into lmdb ]]
+                  if tmpDbNames and #tmpDbNames > 0 and #vectors[1] > 0 then
+                    instanceId = instanceId + 1
+                    for i=1, n do
+                      txn_main[i]:put(instanceId, vectors[i][1])
+                      vectors[i]:remove(1)
+                      if #features[i] > 0 then
+                        txn_feat[i]:put(instanceId, features[i][1])
+                        features[i]:remove(1)
+                      end
+                    end
+                    if instanceId % 500 == 0 then
+                      for i=1, n do
+                        txn_main[i]:commit(); txn_main[i] = db_main[i]:txn()
+                        txn_feat[i]:commit(); txn_feat[i] = db_feat[i]:txn()
+                      end
+                      collectgarbage()
+                    end
+                  end
                 end
               end
             end
@@ -901,26 +993,80 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
           readers[i]:close()
         end
 
-        return _G.__threadid, false, sentenceDists, vectors, features, avgLength, sizes, prunedRatio, count, ignored, emptyCount,
-               sampling and #sampling or _df[1]
+        if tmpDbNames and #tmpDbNames > 0 then
+          for i=1,n do
+            closeDB(db_main[i], txn_main[i])
+            closeDB(db_feat[i], txn_feat[i])
+          end
+        end
+
+        return _G.__threadid, false, sentenceDists, vectors, features, avgLength, sizes, allSizes, prunedRatio, count, ignored, emptyCount,
+               sampling and #sampling or _df[1], tmpDbNames
       end,
       -- aggregate the results together
-      function(__threadid, error, sentenceDists, vectors, features, avgLength, sizes, prunedRatio, count, ignored, emptyCount, kept)
+      function(__threadid, error, sentenceDists, vectors, features, avgLength, sizes, allSizes, prunedRatio, count, ignored, emptyCount, kept, tmpDbNames)
         if error then
           _G.logger:error(sentenceDists)
           os.exit(1)
         end
+
+        local instanceID
+        local g_db_main = {}
+        local g_txn_main = {}
+        local g_db_feat = {}
+        local g_txn_feat = {}
+        if dbNames and #dbNames > 0 then
+          for i=1, n do
+            g_db_main[i], g_txn_main[i] = openDB_RW(dbNames[i] .. '-main.lmdb')
+            g_db_feat[i], g_txn_feat[i] = openDB_RW(dbNames[i] .. '-feat.lmdb')
+          end
+        end
+
         for i = 1, n do
           for j=1, #gSentenceDists[i] do
             gSentenceDists[i][j] = gSentenceDists[i][j] + sentenceDists[i][j]
           end
-          for j=1, #vectors[i] do
-            gVectors[i]:insert(vectors[i][j])
+
+          if dbNames and #dbNames > 0 then
+
+            instanceID = g_db_main[i]:stat()['entries']
+
+            local tmp_db_main, tmp_txn_main = openDB_RO(tmpDbNames[i]..'-main-'..tostring(i))
+            local tmp_db_feat, tmp_txn_feat = openDB_RO(tmpDbNames[i]..'-feat-'..tostring(i))
+            local tmpMainDbCnt = tmp_db_main:stat()['entries']
+            local tmpFeatDbCnt = tmp_db_feat:stat()['entries']
+            if tmpFeatDbCnt > 0 then
+              assert(tmpMainDbCnt == tmpFeatDbCnt)
+            end
+            for tmpDbIdx = 1, tmpMainDbCnt do
+              instanceID = instanceID + 1
+              g_txn_main[i]:put(instanceID, tmp_txn_main:get(tmpDbIdx))
+              if tmpFeatDbCnt > 0 then
+                g_txn_feat[i]:put(instanceID, tmp_txn_feat:get(tmpDbIdx))
+              end              
+              if instanceID % 500 == 0 then
+                g_txn_main[i]:commit(); g_txn_main[i] = g_db_main[i]:txn()
+                g_txn_feat[i]:commit(); g_txn_feat[i] = g_db_feat[i]:txn()
+                collectgarbage()
+              end
+            end
+            closeDB(tmp_db_main, tmp_txn_main)
+            closeDB(tmp_db_feat, tmp_txn_feat)
+          else
+            for j=1, #vectors[i] do
+              gVectors[i]:insert(vectors[i][j])
+            end
+            for j=1, #features[i] do
+              gFeatures[i]:insert(features[i][j])
+            end
           end
-          for j=1, #features[i] do
-            gFeatures[i]:insert(features[i][j])
+
+          for j = 1, #allSizes[i] do
+            gAllSizes[i]:insert(allSizes[i][j])
           end
-          gAvgLength[i] = (gAvgLength[i] * (#gVectors[i]-#vectors[i]) + avgLength[i] * #vectors[i])/#gVectors[i]
+
+          gAvgLength[i] = (gAvgLength[i] * (#gAllSizes[i]-#allSizes[i]) + avgLength[i] * #allSizes[i])/#gAllSizes[i]
+
         end
         for j=1, #sizes do
           gSizes:insert(sizes[j])
@@ -931,15 +1077,23 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
           msgPrune = msgPrune .. nameSources[i] .. ' = '..string.format("%.1f%%", prunedRatio[i] * 100)
         end
 
+        if dbNames and #dbNames > 0 then
+          for i=1,n do
+            closeDB(g_db_main[i], g_txn_main[i])
+            closeDB(g_db_feat[i], g_txn_feat[i])
+            os.execute('rm -rd "'..tmpDbNames[i]..'-main-'..tostring(i)..'"')
+            os.execute('rm -rd "'..tmpDbNames[i]..'-feat-'..tostring(i)..'"')
+          end
+        end
+
         _G.logger:info(' * ['..__threadid..'] file \'%s\' (%s): %d total, %d drawn, %d kept - unknown words: %s',
-                          _df.fname or "n/a", (_df.options and _df.options.textOpt) or '', _df[1], kept, #vectors[1], msgPrune)
+                          _df.fname or "n/a", (_df.options and _df.options.textOpt) or '', _df[1], kept, #allSizes[1], msgPrune)
 
         gCount = gCount + count
         gIgnored = gIgnored + ignored
         gEmptyCount = gEmptyCount + emptyCount
-
       end,
-      _df, self.args.idx_files, self.dataType == 'audiotext', self.args.time_shift_feature, self.args.src_seq_length or self.args.seq_length, self.args.tgt_seq_length, sample_file[_m])
+      _df, self.args.idx_files, self.dataType == 'audiotext', self.args.time_shift_feature, self.args.src_seq_length or self.args.seq_length, self.args.tgt_seq_length, sample_file[_m], dbNames)
   end
 
   self:poolSynchronize()
@@ -959,22 +1113,22 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
     end
   end
 
-  onmt.utils.Error.assert(#gVectors[1] > 0, "empty dataset")
+  onmt.utils.Error.assert(#gAllSizes[1] > 0, "empty dataset")
 
-  if self.args.shuffle then
+  if self.args.shuffle and not self.args.lmdb then
     _G.logger:info('... shuffling sentences')
     local perm = torch.randperm(#gVectors[1])
     gSizes = onmt.utils.Table.reorder(gSizes, perm, true)
     reorderData(perm)
   end
 
-  if self.args.sort then
+  if self.args.sort and not self.args.lmdb then
     _G.logger:info('... sorting sentences by size')
     local _, perm = torch.sort(vecToTensor(gSizes))
     reorderData(perm)
   end
 
-  _G.logger:info('Prepared %d sentences:', #gVectors[1])
+  _G.logger:info('Prepared %d sentences:', #gSizes)
   _G.logger:info(' * %d sequences not validated (length, other)', gIgnored)
   local msgLength = ''
   for i = 1, n do
@@ -997,10 +1151,21 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
     dist = dist..' ]'
     _G.logger:info(' * %s sentence length (range of 10): '..dist, nameSources[i])
 
-    if isInputVector[i] then
-      table.insert(data, { vectors = gVectors[i], features = gFeatures[i] })
+
+    local mainEntry
+    local featEntry
+    if dbNames and #dbNames > 0 then
+      mainEntry = dbNames[i] .. '-main.lmdb'
+      featEntry = dbNames[i] .. '-feat.lmdb'
     else
-      table.insert(data, { words = gVectors[i], features = gFeatures[i] })
+      mainEntry = gVectors[i]
+      featEntry = gFeatures[i]
+    end
+
+    if isInputVector[i] then
+      table.insert(data, { vectors = mainEntry, features = featEntry })
+    else
+      table.insert(data, { words = mainEntry, features = featEntry })
     end
 
   end
@@ -1023,7 +1188,7 @@ local function validBilingual(tokens, src_seq_length, tgt_seq_length)
          isValid(tokens[2], tgt_seq_length)
 end
 
-function Preprocessor:makeBilingualData(files, srcDicts, tgtDicts, sample_file)
+function Preprocessor:makeBilingualData(files, srcDicts, tgtDicts, sample_file, dbNames)
   local data = self:makeGenericData(
                               files,
                               { false, false },
@@ -1045,7 +1210,8 @@ function Preprocessor:makeBilingualData(files, srcDicts, tgtDicts, sample_file)
                                 onmt.utils.Features.generateTarget
                               },
                               self.args.check_plength and self.parallelCheck,
-                              sample_file)
+                              sample_file,
+                              {dbPrefix .. '-src', dbPrefix .. '-tgt'})
   return data[1], data[2]
 end
 
@@ -1056,7 +1222,7 @@ local function validFeat(tokens, src_seq_length, tgt_seq_length)
          isValid(tokens[2], tgt_seq_length)
 end
 
-function Preprocessor:makeFeatTextData(files, tgtDicts, sample_file)
+function Preprocessor:makeFeatTextData(files, tgtDicts, sample_file, dbNames)
   local data = self:makeGenericData(
                               files,
                               { true, false },
@@ -1076,11 +1242,12 @@ function Preprocessor:makeFeatTextData(files, tgtDicts, sample_file)
                                 onmt.utils.Features.generateTarget
                               },
                               self.args.check_plength and self.parallelCheck,
-                              sample_file)
+                              sample_file,
+                              {dbPrefix .. '-src', dbPrefix .. '-tgt'})
   return data[1], data[2]
 end
 
-function Preprocessor:makeAudioTextData(files, tgtDicts, sample_file)
+function Preprocessor:makeAudioTextData(files, tgtDicts, sample_file, dbPrefix)
   local data = self:makeGenericData(
                               files,                       -- * `files`: table of data source name
                               { true, false },             -- * `isInputVector`: table of boolean indicating if corresponding source is an vector
@@ -1100,7 +1267,8 @@ function Preprocessor:makeAudioTextData(files, tgtDicts, sample_file)
                                 onmt.utils.Features.generateTarget
                               },
                               self.args.check_plength and self.parallelCheck, -- * `parallelCheck`: function to check parallely source/target(s)
-                              sample_file)                -- * `sample_file`: possible torch mapping vector
+                              sample_file,                -- * `sample_file`: possible torch mapping vector
+                              {dbPrefix .. '-src', dbPrefix .. '-tgt'})
   return data[1], data[2]
 end
 
@@ -1108,7 +1276,7 @@ local function ValidMono(tokens, seq_length)
   return #tokens[1] > 0 and isValid(tokens[1], seq_length)
 end
 
-function Preprocessor:makeMonolingualData(files, dicts, sample_file)
+function Preprocessor:makeMonolingualData(files, dicts, sample_file, dbPrefix)
   local data = self:makeGenericData(
                               files,
                               { false },
@@ -1126,7 +1294,8 @@ function Preprocessor:makeMonolingualData(files, dicts, sample_file)
                                 onmt.utils.Features.generateTarget
                               },
                               nil,
-                              sample_file)
+                              sample_file,
+                              {dbPrefix .. '-src'})
   return data[1]
 end
 
@@ -1173,7 +1342,8 @@ function Preprocessor:getVocabulary()
   return dicts
 end
 
-function Preprocessor:makeData(dataset, dicts)
+function Preprocessor:makeData(dataset, dicts, dbPrefix)
+
   if dataset ~= 'valid' or
      (self.args.valid and self.args.valid ~= '') or
      (self.args.valid_src and self.args.valid_src ~= '') or
@@ -1217,25 +1387,41 @@ function Preprocessor:makeData(dataset, dicts)
       end
     end
 
+    if self.args.lmdb then
+      lmdb = require('lmdb')
+    else
+      dbPrefix = nil
+    end
+
     local data = {}
     if self.dataType == 'monotext' then
-      data.src = self:makeMonolingualData(self["list_"..dataset], dicts.src, sample_file)
+      data.src = self:makeMonolingualData(self["list_"..dataset], dicts.src, sample_file, dbPrefix)
     elseif self.dataType == 'feattext' then
-      data.src, data.tgt = self:makeFeatTextData(self["list_"..dataset], dicts.tgt, sample_file)
+      data.src, data.tgt = self:makeFeatTextData(self["list_"..dataset], dicts.tgt, sample_file, dbPrefix)
       if not dicts.srcInputSize then
         dicts.srcInputSize = data.src.vectors[1]:size(2)
       else
         onmt.utils.Error.assert(dicts.srcInputSize==data.src.vectors[1]:size(2), "feature size is not matching in all files")
       end
     elseif self.dataType == 'audiotext' then
-      data.src, data.tgt = self:makeAudioTextData(self["list_"..dataset], dicts.tgt, sample_file)
-      if not dicts.srcInputSize then
-        dicts.srcInputSize = data.src.vectors[1]:size(2)
+      data.src, data.tgt = self:makeAudioTextData(self["list_"..dataset], dicts.tgt, sample_file, dbPrefix)
+
+      local srcInputSize
+      if type(data.src.vectors) == 'string' then
+        local db, txn = openDB_RO(data.src.vectors)
+        srcInputSize = txn:get(1):size(2)
+        closeDB(db, txn)
       else
-        onmt.utils.Error.assert(dicts.srcInputSize==data.src.vectors[1]:size(2), "feature size is not matching in all files")
+        srcInputSize = data.src.vectors[1]:size(2)
+      end
+
+      if not dicts.srcInputSize then
+        dicts.srcInputSize = srcInputSize
+      else
+        onmt.utils.Error.assert(dicts.srcInputSize==srcInputSize, "feature size is not matching in all files")
       end
     else
-      data.src, data.tgt = self:makeBilingualData(self["list_"..dataset], dicts.src, dicts.tgt, sample_file)
+      data.src, data.tgt = self:makeBilingualData(self["list_"..dataset], dicts.src, dicts.tgt, sample_file, dbPrefix)
     end
 
     _G.logger:info("")

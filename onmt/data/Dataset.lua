@@ -2,8 +2,8 @@
 local Dataset = torch.class("Dataset")
 
 
-function Dataset.openDB_RO(path, name)
-  local db = lmdb.env {Path = path, Name = name}
+function Dataset.openDB_RO(path)
+  local db = lmdb.env {Path = path}
   db:open()
   local txn = db:txn(true)
   return db, txn
@@ -25,8 +25,8 @@ function Dataset:__init(srcData, tgtData)
 
   if type(self.src) ~= 'table' and type(self.src) == 'string' then
     require('lmdb')
-    self.src_db, self.src_db_txn = self.openDB_RO(self.src, self.src)
-    self.srcFeatures_db, self.srcFeatures_db_txn = self.openDB_RO(self.srcFeatures, self.srcFeatures)
+    self.src_db, self.src_db_txn = self.openDB_RO(self.src)
+    self.srcFeatures_db, self.srcFeatures_db_txn = self.openDB_RO(self.srcFeatures)
   end
 
   if tgtData ~= nil then
@@ -34,8 +34,8 @@ function Dataset:__init(srcData, tgtData)
     self.tgtFeatures = tgtData.features
 
     if type(self.tgt) ~= 'table' and type(self.tgt) == 'string' then
-      self.tgt_db, self.tgt_db_txn = self.openDB_RO(self.tgt, self.tgt)
-      self.tgtFeatures_db, self.tgtFeatures_db_txn = self.openDB_RO(self.tgtFeatures, self.tgtFeatures)
+      self.tgt_db, self.tgt_db_txn = self.openDB_RO(self.tgt)
+      self.tgtFeatures_db, self.tgtFeatures_db_txn = self.openDB_RO(self.tgtFeatures)
     end
   end
 end
