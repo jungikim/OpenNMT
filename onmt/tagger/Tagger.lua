@@ -14,6 +14,20 @@ local options = {
     {
       valid = onmt.utils.ExtendedCmdLine.isInt(1)
     }
+  },
+  {
+    '-ctc_nbest', 3,
+    [[Specifies nbest for ctc beam or ngram decoding]],
+    {
+      structural = 1
+    }
+  },
+  {
+    '-ctc_lm', '',
+    [[Specifies the ARPA or binary language model file to be used for ngram decoding]],
+    {
+      structural = 1
+    }
   }
 }
 
@@ -34,6 +48,8 @@ function Tagger:__init(args)
   end
 
   self.model = onmt.SeqTagger.load(self.checkpoint.options, self.checkpoint.models, self.checkpoint.dicts)
+  self.model:loadCtcDecoder(self.checkpoint.dicts, args.ctc_nbest, args.ctc_lm)
+
   onmt.utils.Cuda.convert(self.model)
 
   self.dicts = self.checkpoint.dicts

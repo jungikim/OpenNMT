@@ -95,6 +95,49 @@ function SeqTagger:__init(args, dicts)
   elseif self.loglikelihood == 'ctc' then
     require 'nnx'
     self.criterion = nn.CTCCriterion(--[[batchFirst]] true) -- with batchFirst, expects B x seqLen x dim as input
+    self:loadCtcDecoder(dicts)
+  end
+end
+
+function SeqTagger:loadCtcDecoder(dicts, ctc_nest, ctc_lm)
+  ctcdecode = require 'ctcdecode'
+  self.ctc_nBest =  ctc_nbest or 3
+
+  if ctc_lm and ctc_lm:len() > 0 then
+    if not paths.filep(ctc_lm) then
+      _G.logger:error('Cannot find CTC LM file: ' .. ctc_lm)
+      os.exit(1)
+    end
+
+    local tmpF = paths.tmpname()
+    _G.logger:info('Writing temporary label file to ' .. tmpF)
+    local file = assert(io.open(tmpF, 'w'))
+    for i = 1, dicts.tgt.words:size() do
+      file:write(dicts.tgt.words.idxToLabel[i] .. '\n')
+    end
+    file:close()
+
+    local labelMapFilename = paths.thisfile(tmpF)
+    local ngramModelFilename = paths.thisfile(ctc_lm)
+
+    local scorer = ctcdecode.NGramBeamScorer(labelMapFilename, ngramModelFilename)
+
+    self.ctc_decoder = ctcdecode.NGramDecoder(
+      dicts.tgt.words:size(),
+      10 * self.ctc_nBest,
+      scorer,
+      1,
+      false
+      )
+  else
+    local scorer = ctcdecode.DefaultBeamScorer()
+    local decoder = ctcdecode.BeamSearchDecoder(
+      dicts.tgt.words:size(),
+      10 * self.ctc_nBest,
+      scorer,
+      1,
+      false
+    )
   end
 end
 
@@ -130,6 +173,7 @@ function SeqTagger.load(args, models, dicts)
     require 'nnx'
     self.criterion = nn.CTCCriterion(--[[batchFirst]] true) -- with batchFirst, expects B x seqLen x dim as input
     self.loglikelihood = 'ctc'
+    self:loadCtcDecoder(dicts)
   end
 
   return self
@@ -362,19 +406,12 @@ function SeqTagger:tagBatch(batch)
     --    print('tagsScores: ' .. tostring(tagsScores))
     --    print('batch.sourceSize: ' .. tostring(batch.sourceSize))
 
-    if ctcdecode == nil then ctcdecode = require 'ctcdecode' end
-    local nBest = 3
-    local decoder = ctcdecode.BeamSearchDecoder(
-      tagsScores:size(3),
-      10 * nBest,
-      ctcdecode.DefaultBeamScorer(),
-      1,
-      false
-    )
-
     for b = 1, batch.size do
       -- expects tagsScores to be seqLen x B x tagSize
-      local outputs, alignments, pathLen, scores = decoder:decode(tagsScores[{{b},{batch.sourceLength - batch.sourceSize[b] + 1, batch.sourceLength},{}}]:transpose(1,2), nBest, torch.IntTensor({batch.sourceSize[b]}))
+      local outputs, alignments, pathLen, scores =
+                                self.ctc_decoder:decode(tagsScores[{{b},{batch.sourceLength - batch.sourceSize[b] + 1, batch.sourceLength},{}}]:transpose(1,2):type('torch.FloatTensor'),
+                                                    self.ctc_nBest,
+                                                    torch.IntTensor({batch.sourceSize[b]}))
       for t = 1, pathLen[1][--[[Best]] 1] do
         pred[b][t] = outputs[1][--[[Best]] 1][t]
         feats[b][t] = {}

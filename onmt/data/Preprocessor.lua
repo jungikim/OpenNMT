@@ -77,8 +77,8 @@ local commonOptions = {
     [[Store data instances in LMDB]],
     {
       depends = function(opt)
-                  return opt.lmdb == false or (opt.sort == false and opt.shuffle == false and opt.preprocess_pthreads == 1),
-                         "option `lmdb` requires `sort`=false, `shuffle`=false, `preprocess_pthreads`=1"
+                  return opt.lmdb == false or (opt.sort == false and opt.shuffle == false),
+                         "option `lmdb` requires `sort`=false and `shuffle`=false"
                 end
     }
   }
