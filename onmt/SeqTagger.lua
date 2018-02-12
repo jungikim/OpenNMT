@@ -131,7 +131,7 @@ function SeqTagger:loadCtcDecoder(dicts, ctc_nest, ctc_lm)
       )
   else
     local scorer = ctcdecode.DefaultBeamScorer()
-    local decoder = ctcdecode.BeamSearchDecoder(
+    self.ctc_decoder = ctcdecode.BeamSearchDecoder(
       dicts.tgt.words:size(),
       10 * self.ctc_nBest,
       scorer,
