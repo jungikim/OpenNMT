@@ -154,7 +154,7 @@ local function main()
   local withAttention = opt.save_attention:len() > 0
 
   if withGoldScore then
-    goldReader = onmt.utils.FileReader.new(opt.tgt, opt.idx_files, translator:srcFeat())
+    goldReader = onmt.utils.FileReader.new(opt.tgt, opt.idx_files)
     goldBatch = {}
   end
 
