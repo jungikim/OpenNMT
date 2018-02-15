@@ -138,7 +138,7 @@ function Translator.expandOpts(cmd, dataType)
   local current_block;
   local pref = "{src,tgt}_"
   if dataType == "monotext" then pref = "" end
-  if dataType == "feattext" then pref = "tgt_" end
+  if dataType == "feattext" or dataType == 'audiotext' then pref = "tgt_" end
   for i, v in ipairs(cmd.helplines) do
     if type(v) == "string" then
       local p = v:find(" options")

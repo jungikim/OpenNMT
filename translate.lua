@@ -79,7 +79,13 @@ local function main()
 
   local translator = onmt.translate.Translator.new(opt)
 
-  local srcReader = onmt.utils.FileReader.new(opt.src, opt.idx_files, translator:srcFeat())
+  if opt.idx_files and translator:srcFeat() then
+    translator.dataType = 'feattext'
+  elseif not opt.idx_files and translator:srcFeat() then
+    translator.dataType = 'audiotext'
+  end
+
+  local srcReader = onmt.utils.FileReader.new(opt.src, opt.idx_files, --[[featSequence]] translator.dataType == 'feattext')
   local srcBatch = {}
   local srcIdBatch = {}
 
@@ -192,12 +198,12 @@ local function main()
     end
 
     if srcSeq then
-      if srcSeq:len() > 0 then
+      if type(srcSeq) == 'string' and srcSeq:len() > 0 then
         srcSeq = _G.hookManager:call("mpreprocess", optMPr[1], srcSeq) or srcSeq
         if optTok[1] then
           srcSeq = tokenizer.tokenize(optTok[1], srcSeq, bpes[1])
         end
-      else
+      elseif not translator:srcFeat() then
         srcSeq = {}
       end
       table.insert(srcBatch, translator:buildInput(srcSeq))
