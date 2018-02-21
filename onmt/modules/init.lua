@@ -7,6 +7,7 @@ require('onmt.modules.PDBiEncoder')
 require('onmt.modules.DBiEncoder')
 require('onmt.modules.GoogleEncoder')
 require('onmt.modules.CNNEncoder')
+require('onmt.modules.DeepSpeech2Encoder')
 require('onmt.modules.Decoder')
 
 require('onmt.modules.Network')

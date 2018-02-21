@@ -223,7 +223,7 @@ function SeqTagger:forwardComputeLoss(batch)
   elseif self.loglikelihood == 'ctc' then
 
     local tagsScoreTable = {}
-    for t = 1, batch.sourceLength do
+    for t = 1, context:size(2) do
       local tagsScore = self.models.generator:forward(context:select(2, t)) -- B x TagSize
       -- tagsScore is a table
       tagsScore = nn.utils.addSingletonDimension(tagsScore[1], 2):clone() -- B x 1 x TagSize
@@ -290,7 +290,7 @@ function SeqTagger:trainNetwork(batch)
   elseif self.loglikelihood == 'ctc' then
 
     local tagsScoreTable = {}
-    for t = 1, batch.sourceLength do
+    for t = 1, context:size(2) do
       local tagsScore = self.models.generator:forward(context:select(2, t)) -- B x TagSize
       -- tagsScore is a table
       tagsScore = nn.utils.addSingletonDimension(tagsScore[1], 2):clone() -- B x 1 x TagSize
@@ -305,21 +305,27 @@ function SeqTagger:trainNetwork(batch)
       table.insert(refTable,torch.totable(reference[{{bIdx},{1, batch.targetSize[bIdx]-1}}][1]:clone():float()))
     end
 
-    --    print('tagsScores: ' .. tostring(tagsScores))
-    --    print('refTable: ')
-    --    for bIdx = 1, batch.size do
-    --      print(refTable[bIdx])
-    --    end
-    --    print('batch.sourceSize: ' .. tostring(batch.sourceSize))
+--        print('tagsScores: ' .. tostring(tagsScores))
+--        print('refTable: ')
+--        for bIdx = 1, batch.size do
+--          print(refTable[bIdx])
+--        end
+--        print('batch.sourceSize: ' .. tostring(batch.sourceSize))
 
     loss = self.criterion:forward(tagsScores, refTable, batch.sourceSize:float())
 
-    --    print('Loss: ' .. tostring(loss))
+--        print('Loss: ' .. tostring(loss))
 
     local gradCriterion = self.criterion:backward(tagsScores, refTable)
 
+--    if loss ~= loss then
+--      print('Invalid loss: ' .. tostring(loss))
+--      gradCriterion:zero()
+--      loss = 0.0
+--    end
+
     gradCriterion = torch.div(gradCriterion, batch.size)
-    for t = 1, batch.sourceLength do
+    for t = 1, context:size(2) do
       gradContexts:select(2,t):copy(self.models.generator:backward(context:select(2, t), {gradCriterion:select(2,t)}))
     end
 

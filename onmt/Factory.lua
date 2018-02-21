@@ -57,6 +57,7 @@ function Factory.declareOpts(cmd)
   onmt.PDBiEncoder.declareOpts(cmd)
   onmt.GoogleEncoder.declareOpts(cmd)
   onmt.CNNEncoder.declareOpts(cmd)
+  onmt.DeepSpeech2Encoder.declareOpts(cmd)
   onmt.GlobalAttention.declareOpts(cmd)
 end
 
