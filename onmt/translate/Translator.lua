@@ -138,7 +138,7 @@ function Translator.expandOpts(cmd, dataType)
   local current_block;
   local pref = "{src,tgt}_"
   if dataType == "monotext" then pref = "" end
-  if dataType == "feattext" then pref = "tgt_" end
+  if dataType == "feattext" or dataType == 'audiotext' then pref = "tgt_" end
   for i, v in ipairs(cmd.helplines) do
     if type(v) == "string" then
       local p = v:find(" options")
@@ -252,7 +252,10 @@ function Translator:buildInput(tokens)
   if self.dataType == 'feattext' then
     data.vectors = torch.Tensor(tokens)
   elseif self.dataType == 'audiotext' then
-    data.vectors = onmt.data.Audio.getSpectrogram(tokens[1], 0.02, 0.01, 16000)
+    if type(tokens) == 'table' then
+      tokens = tokens[1]
+    end
+    data.vectors = onmt.data.Audio.getSpectrogram(tokens, 0.02, 0.01, 16000)
   else
     local words, features = onmt.utils.Features.extract(tokens)
     local vocabs, placeholders = onmt.utils.Placeholders.norm(words)
