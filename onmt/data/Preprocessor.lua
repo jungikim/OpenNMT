@@ -811,7 +811,8 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
 
               if isInputVector[i] then
                 if audio_files then
-                  instance[i] = onmt.data.Audio.getSpectrogram(tokens[1], 0.02, 0.01, 16000)
+                  --  instance[i] = onmt.data.Audio.getSpectrogram(tokens[1], 0.02, 0.01, 16000)
+                  instance[i] = onmt.data.Audio.getMfcc(tokens[1])
                 else
                   instance[i] = torch.Tensor(tokens)
                 end

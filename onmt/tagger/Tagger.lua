@@ -64,7 +64,8 @@ function Tagger:buildInput(tokens)
   if self.dataType == 'feattext' then
     data.vectors = torch.Tensor(tokens)
   elseif self.dataType == 'audiotext' then
-    data.vectors = onmt.data.Audio.getSpectrogram(type(tokens)=='table' and tokens[1] or tokens, 0.02, 0.01, 16000)
+    --  data.vectors = onmt.data.Audio.getSpectrogram(type(tokens)=='table' and tokens[1] or tokens, 0.02, 0.01, 16000)
+    data.vectors = onmt.data.Audio.getMfcc(type(tokens)=='table' and tokens[1] or tokens)
   else
     local words, features = onmt.utils.Features.extract(tokens)
     local vocabs = onmt.utils.Placeholders.norm(words)
