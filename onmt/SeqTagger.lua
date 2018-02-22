@@ -259,6 +259,15 @@ end
 function SeqTagger:trainNetwork(batch)
   local loss = 0
 
+  local mfcc = batch.sourceInput
+  --print(mfcc:size())
+  --print(batch.sourceInput[{{1,-1},{1},{}}])
+  local NaN = mfcc:ne(mfcc)
+  if NaN:sum() > 0 then
+    print('MFCC NaN: ' .. tostring(NaN:sum()))
+    mfcc[NaN] = 0
+  end
+
   local _, context = self.models.encoder:forward(batch)
 
   local gradContexts = context:clone():zero()
@@ -318,11 +327,11 @@ function SeqTagger:trainNetwork(batch)
 
     local gradCriterion = self.criterion:backward(tagsScores, refTable)
 
---    if loss ~= loss then
---      print('Invalid loss: ' .. tostring(loss))
---      gradCriterion:zero()
---      loss = 0.0
---    end
+    if loss ~= loss then
+      print('Invalid loss: ' .. tostring(loss))
+      gradCriterion:zero()
+      loss = 0.0
+    end
 
     gradCriterion = torch.div(gradCriterion, batch.size)
     for t = 1, context:size(2) do

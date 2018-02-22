@@ -648,6 +648,15 @@ local function processSentence(n, idx, tokens, parallelCheck, isValid, isInputVe
     valid = parallelCheck(idx, isInputVector, dicts, tokens)
   end
 
+  for i = 1, n do
+    -- if data is a Tensor, check for invalid values (NaN)
+    if torch.typename(tokens[i]) and torch.typename(tokens[i]):find('torch.*Tensor') then
+      if tokens[i]:ne(tokens[i]):sum() > 0 then
+        valid=false
+      end
+    end
+  end
+
   if valid and isValid(tokens, src_seq_length, tgt_seq_length) then
     for i = 1, n do
 
@@ -811,7 +820,7 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
 
               if isInputVector[i] then
                 if audio_files then
-                  --  instance[i] = onmt.data.Audio.getSpectrogram(tokens[1], 0.02, 0.01, 16000)
+--                  instance[i] = onmt.data.Audio.getSpectrogram(tokens[1])
                   instance[i] = onmt.data.Audio.getMfcc(tokens[1])
                 else
                   instance[i] = torch.Tensor(tokens)
