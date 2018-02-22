@@ -30,7 +30,7 @@ function Audio.getMfcc(file,
   frameSize = frameSize or 25
   frameStride = frameStride or 10
   filterbankChannels = filterbankChannels or 20
-  cepstralCoefficients = cepstralCoefficients or 13
+  cepstralCoefficients = cepstralCoefficients or 40
   liftering = liftering or 22
   lowerCutoffFrequency = lowerCutoffFrequency or 0
   upperCutoffFrequency = upperCutoffFrequency or sampleRate/2
@@ -44,7 +44,7 @@ function Audio.getMfcc(file,
   local f_path = paths.thisfile(file)
   local file = sndfile.SndFile(f_path)
   local d = file:readFloat(file:info().frames):squeeze():double()
-  local mfcc = speech.Mfcc{fs  = sampleRate,
+  local mfcc_f = speech.Mfcc{fs  = sampleRate,
                            tw  = frameSize,
                            ts  = frameStride,
                            M   = filterbankChannels,
@@ -54,7 +54,13 @@ function Audio.getMfcc(file,
                            R2  = upperCutoffFrequency,
                            dev = derivativeContextWindowSize,
                            mel_floor = melFloor}
-  return mfcc(d)
+  local mfcc = mfcc_f(d)
+  local mean = mfcc:mean()
+  local std = mfcc:std()
+  mfcc:add(-mean)
+  mfcc:div(std)
+
+  return mfcc
 end
 
 return Audio
