@@ -1,6 +1,11 @@
 local Audio = torch.class("Audio")
 
 function Audio.getSpectrogram(file, windowSize, stride, sampleRate)
+
+  windowSize = windowSize or 0.02
+  stride = stride or 0.01
+  sampleRate = sampleRate or 16000
+
   if not audio then require 'audio' end
 
   local audioFile = audio.load(file)
