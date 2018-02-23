@@ -59,22 +59,46 @@ local function loadData(opt, filename)
                       data.dataType, modelClass.modelName())
 
     -- check if LMDB and update paths to DB
-    if data.train and data.train.src and type(data.train.src) == 'string' then
+    if data.train and data.train.src and type(data.train.src.features) == 'string' then
       --remove -train.t7
       -- append -train if data.train
       -- append -valid if data.valid
       -- append -src if src, -tgt if tgt
-      if data.train and data.train.src then
-        data.train.src = string.sub(filename, 1, -10) .. '-train-src'
+      if data.train and data.train.src and data.train.src.words then
+        data.train.src.words = string.sub(filename, 1, -10) .. '-train-src-main.lmdb'
       end
-      if data.train and data.train.tgt then
-        data.train.tgt = string.sub(filename, 1, -10) .. '-train-tgt'
+      if data.train and data.train.src and data.train.src.vectors then
+        data.train.src.vectors = string.sub(filename, 1, -10) .. '-train-src-main.lmdb'
       end
-      if data.valid and data.valid.src then
-        data.valid.src = string.sub(filename, 1, -10) .. '-valid-tgt'
+      if data.train and data.train.src and data.train.src.features then
+        data.train.src.features = string.sub(filename, 1, -10) .. '-train-src-feat.lmdb'
       end
-      if data.valid and data.valid.tgt then
-        data.valid.tgt = string.sub(filename, 1, -10) .. '-valid-tgt'
+      if data.train and data.train.tgt and data.train.tgt.words then
+        data.train.tgt.words = string.sub(filename, 1, -10) .. '-train-tgt-main.lmdb'
+      end
+      if data.train and data.train.tgt and data.train.tgt.vectors then
+        data.train.tgt.vectors = string.sub(filename, 1, -10) .. '-train-tgt-main.lmdb'
+      end
+      if data.train and data.train.tgt and data.train.tgt.features then
+        data.train.tgt.features = string.sub(filename, 1, -10) .. '-train-tgt-feat.lmdb'
+      end
+      if data.valid and data.valid.src and data.valid.src.words then
+        data.valid.src.words = string.sub(filename, 1, -10) .. '-valid-src-main.lmdb'
+      end
+      if data.valid and data.valid.src and data.valid.src.vectors then
+        data.valid.src.vectors = string.sub(filename, 1, -10) .. '-valid-src-main.lmdb'
+      end
+      if data.valid and data.valid.src and data.valid.src.features then
+        data.valid.src.features = string.sub(filename, 1, -10) .. '-valid-src-feat.lmdb'
+      end
+      if data.valid and data.valid.tgt and data.valid.tgt.words then
+        data.valid.tgt.words = string.sub(filename, 1, -10) .. '-valid-tgt-main.lmdb'
+      end
+      if data.valid and data.valid.tgt and data.valid.tgt.vectors then
+        data.valid.tgt.vectors = string.sub(filename, 1, -10) .. '-valid-tgt-main.lmdb'
+      end
+      if data.valid and data.valid.tgt and data.valid.tgt.features then
+        data.valid.tgt.features = string.sub(filename, 1, -10) .. '-valid-tgt-feat.lmdb'
       end
     end
 
