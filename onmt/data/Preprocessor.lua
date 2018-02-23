@@ -699,6 +699,7 @@ local function openDB_RW(path)
 end
 
 local function openDB_RO(path)
+  if not bit then bit = require 'bit' end
   local db = lmdb.env {Path = path, RDONLY = true, MaxReaders = 126}
   db:open()
   local txn = db:txn(true)
