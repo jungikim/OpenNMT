@@ -3,7 +3,7 @@ local Dataset = torch.class("Dataset")
 
 
 function Dataset.openDB_RO(path)
-  local db = lmdb.env {Path = path}
+  local db = lmdb.env {Path = path, RDONLY = true, MaxReaders = 126}
   db:open()
   local txn = db:txn(true)
   return db, txn

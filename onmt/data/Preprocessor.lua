@@ -228,7 +228,7 @@ function Preprocessor.expandOpts(cmd, dataType)
   local pref = "{src,tgt}_"
   if dataType == "monotext" then pref = "" end
   if dataType == "feattext" then pref = "tgt_" end
-  if dataType == "audiotext" then pref = "tgt_"; require 'audio'; end
+  if dataType == "audiotext" then pref = "tgt_" end
   for i, v in ipairs(cmd.helplines) do
     if type(v) == "string" then
       local p = v:find(" options")
@@ -699,7 +699,7 @@ local function openDB_RW(path)
 end
 
 local function openDB_RO(path)
-  local db = lmdb.env {Path = path}
+  local db = lmdb.env {Path = path, RDONLY = true, MaxReaders = 126}
   db:open()
   local txn = db:txn(true)
   return db, txn
@@ -820,8 +820,16 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
 
               if isInputVector[i] then
                 if audio_files then
---                  instance[i] = onmt.data.Audio.getSpectrogram(tokens[1])
-                  instance[i] = onmt.data.Audio.getMfcc(tokens[1])
+                  if _G.args.audio_feature_type == 'mfcc' then
+                    instance[i] = onmt.data.Audio.getMfcc(tokens[1])
+                  elseif _G.args.audio_feature_type == 'mfsc' then
+                   instance[i] = onmt.data.Audio.getMfsc(tokens[1])
+                   elseif _G.args.audio_feature_type == 'spectrogram' then
+                    instance[i] = onmt.data.Audio.getSpectrogram(tokens[1])
+                  else
+                    _G.logger:error('Unknown audio feature type: %s', _G.args.audio_feature_type)
+                    os.exit(1)
+                  end
                 else
                   instance[i] = torch.Tensor(tokens)
                 end
@@ -1198,7 +1206,7 @@ local function validBilingual(tokens, src_seq_length, tgt_seq_length)
          isValid(tokens[2], tgt_seq_length)
 end
 
-function Preprocessor:makeBilingualData(files, srcDicts, tgtDicts, sample_file, dbNames)
+function Preprocessor:makeBilingualData(files, srcDicts, tgtDicts, sample_file, dbPrefix)
   local data = self:makeGenericData(
                               files,
                               { false, false },
@@ -1232,7 +1240,7 @@ local function validFeat(tokens, src_seq_length, tgt_seq_length)
          isValid(tokens[2], tgt_seq_length)
 end
 
-function Preprocessor:makeFeatTextData(files, tgtDicts, sample_file, dbNames)
+function Preprocessor:makeFeatTextData(files, tgtDicts, sample_file, dbPrefix)
   local data = self:makeGenericData(
                               files,
                               { true, false },

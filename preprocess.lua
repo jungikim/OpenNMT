@@ -17,6 +17,16 @@ local options = {
     }
   },
   {
+    '-audio_feature_type', 'mfcc',
+    [[audio feature type.]],
+    {
+      enum = {'mfcc', 'mfsc', 'spectrogram'},
+      depends = function(opt)
+        return opt.data_type == 'audiotext', "audio_feature_type requires -data_type audiotext"
+      end
+    }
+  },
+  {
     '-dry_run', false,
     [[If set, this will only prepare the preprocessor. Useful when using file sampling to
       test distribution rules.]]

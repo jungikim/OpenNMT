@@ -58,6 +58,26 @@ local function loadData(opt, filename)
                       'Data type `%s\' is incompatible with `%s\' models',
                       data.dataType, modelClass.modelName())
 
+    -- check if LMDB and update paths to DB
+    if data.train and data.train.src and type(data.train.src) == 'string' then
+      --remove -train.t7
+      -- append -train if data.train
+      -- append -valid if data.valid
+      -- append -src if src, -tgt if tgt
+      if data.train and data.train.src then
+        data.train.src = string.sub(filename, 1, -10) .. '-train-src'
+      end
+      if data.train and data.train.tgt then
+        data.train.tgt = string.sub(filename, 1, -10) .. '-train-tgt'
+      end
+      if data.valid and data.valid.src then
+        data.valid.src = string.sub(filename, 1, -10) .. '-valid-tgt'
+      end
+      if data.valid and data.valid.tgt then
+        data.valid.tgt = string.sub(filename, 1, -10) .. '-valid-tgt'
+      end
+    end
+
   else
     data = onmt.data.DynamicDataRepository.new(opt, modelClass)
   end
@@ -328,8 +348,17 @@ local function main()
 
   if onmt.train.Saver.checkpointDefined(opt) then
     model, trainStates = loadModel(opt, data.dicts)
+    if data.audio_feature_type and model.audio_feature_type and
+       data.audio_feature_type ~= model.audio_feature_type then
+      _G.logger:error('Incompatible audio feature type: data %s, model %s',
+                             data.audio_feature_type, model.audio_feature_type)
+      os.exit(1)
+    end
   else
     model = buildModel(opt, data.dicts)
+    if data.audio_feature_type then
+      model.audio_feature_type = data.audio_feature_type
+    end
   end
 
   onmt.utils.Cuda.convert(model)
