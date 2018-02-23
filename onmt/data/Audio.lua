@@ -1,12 +1,17 @@
 local Audio = torch.class("Audio")
 
+local audio
+local paths
+local speech
+local sndfile
+
 function Audio.getSpectrogram(file, windowSize, stride, sampleRate)
 
   windowSize = windowSize or 0.02
   stride = stride or 0.01
   sampleRate = sampleRate or 16000
 
-  if not audio then require 'audio' end
+  if not audio then audio = require 'audio' end
 
   local audioFile = audio.load(file)
   local spect = audio.spectrogram(audioFile, windowSize * sampleRate, 'hamming', stride * sampleRate)
@@ -47,8 +52,8 @@ function Audio.getMfcc(file,
   if not sndfile then sndfile = require ('sndfile') end
 
   local f_path = paths.thisfile(file)
-  local file = sndfile.SndFile(f_path)
-  local d = file:readFloat(file:info().frames):squeeze():double()
+  local sndFile = sndfile.SndFile(f_path)
+  local d = sndFile:readFloat(sndFile:info().frames):squeeze():double()
   local mfcc_f = speech.Mfcc{fs  = sampleRate,
                            tw  = frameSize,
                            ts  = frameStride,
@@ -93,8 +98,8 @@ function Audio.getMfsc(file,
   if not sndfile then sndfile = require ('sndfile') end
 
   local f_path = paths.thisfile(file)
-  local file = sndfile.SndFile(f_path)
-  local d = file:readFloat(file:info().frames):squeeze():double()
+  local sndFile = sndfile.SndFile(f_path)
+  local d = sndFile:readFloat(sndFile:info().frames):squeeze():double()
   local mfsc_f = speech.Mfsc{fs  = sampleRate,
                            tw  = frameSize,
                            ts  = frameStride,

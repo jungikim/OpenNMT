@@ -11,6 +11,7 @@ end
 local Preprocessor = torch.class('Preprocessor')
 local paths = require 'paths'
 local tokenizer = require('tools.utils.tokenizer')
+local lmdb = nil
 
 local tds
 local threads
@@ -692,6 +693,7 @@ local function processSentence(n, idx, tokens, parallelCheck, isValid, isInputVe
 end
 
 local function openDB_RW(path)
+  if not lmdb then lmdb = require 'lmdb' end
   local db = lmdb.env {Path = path}
   db:open()
   local txn = db:txn()
@@ -699,7 +701,9 @@ local function openDB_RW(path)
 end
 
 local function openDB_RO(path)
+  -- setting bit as global; lmdb requires it; in some versions of lua, bit is not built-in.
   if not bit then bit = require 'bit' end
+  if not lmdb then lmdb = require 'lmdb' end
   local db = lmdb.env {Path = path, RDONLY = true, MaxReaders = 126}
   db:open()
   local txn = db:txn(true)
@@ -731,7 +735,8 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
   local n = #files[1][2]
 
   if dbNames then
-    onmt.utils.Error.assert(#dbNames == n, "Incorrect number of DB names (" .. tostring(dbNames) .. ") provided; should be ".. tostring(n))
+    onmt.utils.Error.assert(#dbNames == n,
+       "Incorrect number of DB names (" .. tostring(dbNames) .. ") provided; should be ".. tostring(n))
   end
 
   local gSentenceDists = {}
@@ -756,7 +761,7 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
   -- iterate on each file
   for _m, _df in ipairs(files) do
     self:poolAddJob(
-      function(df, idx_files, audio_files, time_shift_feature, src_seq_length, tgt_seq_length, sampling, dbNames)
+      function(df, idx_files, audio_files, time_shift_feature, src_seq_length, tgt_seq_length, sampling)
         local count = 0
         local ignored = 0
         local emptyCount = 0
@@ -817,15 +822,20 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
                   gIdx = idx
                 end
               end
-              if idx_files then indices[gIdx] = true end
+              if idx_files then
+                if i == 1 and indices[gIdx] then
+                  return _G.__threadid, 1, string.format('duplicate idx in %s file: '..gIdx, nameSources[i])
+                end
+                indices[gIdx] = true
+              end
 
               if isInputVector[i] then
                 if audio_files then
                   if _G.args.audio_feature_type == 'mfcc' then
                     instance[i] = onmt.data.Audio.getMfcc(tokens[1])
                   elseif _G.args.audio_feature_type == 'mfsc' then
-                   instance[i] = onmt.data.Audio.getMfsc(tokens[1])
-                   elseif _G.args.audio_feature_type == 'spectrogram' then
+                    instance[i] = onmt.data.Audio.getMfsc(tokens[1])
+                  elseif _G.args.audio_feature_type == 'spectrogram' then
                     instance[i] = onmt.data.Audio.getSpectrogram(tokens[1])
                   else
                     _G.logger:error('Unknown audio feature type: %s', _G.args.audio_feature_type)
@@ -837,10 +847,6 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
               else
                 instance[i] = tokens
               end
-            end
-
-            if indices[gIdx] then
-              return _G.__threadid, 1, string.format('duplicate idx in %s file: '..gIdx, nameSources[i])
             end
 
             if endOfFile then break end
@@ -1062,7 +1068,7 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
               g_txn_main[i]:put(instanceID, tmp_txn_main:get(tmpDbIdx))
               if tmpFeatDbCnt > 0 then
                 g_txn_feat[i]:put(instanceID, tmp_txn_feat:get(tmpDbIdx))
-              end              
+              end
               if instanceID % 500 == 0 then
                 g_txn_main[i]:commit(); g_txn_main[i] = g_db_main[i]:txn()
                 g_txn_feat[i]:commit(); g_txn_feat[i] = g_db_feat[i]:txn()
@@ -1112,7 +1118,7 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
         gIgnored = gIgnored + ignored
         gEmptyCount = gEmptyCount + emptyCount
       end,
-      _df, self.args.idx_files, self.dataType == 'audiotext', self.args.time_shift_feature, self.args.src_seq_length or self.args.seq_length, self.args.tgt_seq_length, sample_file[_m], dbNames)
+      _df, self.args.idx_files, self.dataType == 'audiotext', self.args.time_shift_feature, self.args.src_seq_length or self.args.seq_length, self.args.tgt_seq_length, sample_file[_m])
   end
 
   self:poolSynchronize()
@@ -1406,9 +1412,7 @@ function Preprocessor:makeData(dataset, dicts, dbPrefix)
       end
     end
 
-    if self.args.lmdb then
-      lmdb = require('lmdb')
-    else
+    if not self.args.lmdb then
       dbPrefix = nil
     end
 

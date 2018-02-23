@@ -99,8 +99,10 @@ function SeqTagger:__init(args, dicts)
   end
 end
 
-function SeqTagger:loadCtcDecoder(dicts, ctc_nest, ctc_lm)
-  ctcdecode = require 'ctcdecode'
+function SeqTagger:loadCtcDecoder(dicts, ctc_nbest, ctc_lm)
+  local ctcdecode = require 'ctcdecode'
+  local paths = require 'paths'
+
   self.ctc_nBest =  ctc_nbest or 3
 
   if ctc_lm and ctc_lm:len() > 0 then
@@ -398,15 +400,6 @@ function SeqTagger:tagBatch(batch)
       tagsScore = nn.utils.addSingletonDimension(tagsScore[1], 2):clone() -- B x 1 x TagSize
       table.insert(tagsScoreTable, tagsScore)
     end
-    local tagsScores = nn.JoinTable(2):forward(tagsScoreTable) -- B x SeqLen x TagSize
-
-    local tagsScoreTable = {}
-    for t = 1, batch.sourceLength do
-      local tagsScore = self.models.generator:forward(context:select(2, t)) -- B x TagSize
-      -- tagsScore is a table
-      tagsScore = nn.utils.addSingletonDimension(tagsScore[1], 2):clone() -- B x 1 x TagSize
-      table.insert(tagsScoreTable, tagsScore)
-    end
     local tagsScores = nn.JoinTable(2):forward(tagsScoreTable):type(torch.type(context)) -- B x SeqLen x TagSize
 
     --    print('tagsScores: ' .. tostring(tagsScores))
@@ -414,7 +407,7 @@ function SeqTagger:tagBatch(batch)
 
     for b = 1, batch.size do
       -- expects tagsScores to be seqLen x B x tagSize
-      local outputs, alignments, pathLen, scores =
+      local outputs, --[[alignments]]_, pathLen, --[[scores]]_ =
                                 self.ctc_decoder:decode(tagsScores[{{b},{batch.sourceLength - batch.sourceSize[b] + 1, batch.sourceLength},{}}]:transpose(1,2):type('torch.FloatTensor'),
                                                     self.ctc_nBest,
                                                     torch.IntTensor({batch.sourceSize[b]}))

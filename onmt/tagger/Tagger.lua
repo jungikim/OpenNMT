@@ -71,7 +71,7 @@ function Tagger:buildInput(tokens)
     elseif self.model.audio_feature_type == 'spectrogram' then
       data.vectors = onmt.data.Audio.getSpectrogram(type(tokens)=='table' and tokens[1] or tokens)
     else
-      _G.logger:error('Unknown audio feature type: %s', args.audio_feature_type)
+      _G.logger:error('Unknown audio feature type: %s', self.opt.audio_feature_type)
       os.exit(1)
     end
   else

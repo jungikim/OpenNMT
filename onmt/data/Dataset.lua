@@ -1,9 +1,12 @@
 --[[ Data management and batch creation. Handles data created by `preprocess.lua`. ]]
 local Dataset = torch.class("Dataset")
 
+local lmdb -- loaded as needed
 
 function Dataset.openDB_RO(path)
-  if not bit then bit = require 'bit' end
+  -- setting bit as global; lmdb requires it; in some versions of lua, bit is not built-in.
+  if not bit then bit = require ('bit') end
+  if not lmdb then lmdb = require('lmdb') end
   local db = lmdb.env {Path = path, RDONLY = true, MaxReaders = 126}
   db:open()
   local txn = db:txn(true)
@@ -25,7 +28,6 @@ function Dataset:__init(srcData, tgtData)
   self.constraints = srcData.constraints
 
   if type(self.src) ~= 'table' and type(self.src) == 'string' then
-    require('lmdb')
     self.src_db, self.src_db_txn = self.openDB_RO(self.src)
     self.srcFeatures_db, self.srcFeatures_db_txn = self.openDB_RO(self.srcFeatures)
   end
