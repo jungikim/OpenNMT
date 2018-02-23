@@ -40,7 +40,7 @@ function Audio.getMfcc(file,
   lowerCutoffFrequency = lowerCutoffFrequency or 0
   upperCutoffFrequency = upperCutoffFrequency or sampleRate/2
   derivativeContextWindowSize = derivativeContextWindowSize or 9
-  melFloor = melFloor or 0.0
+  melFloor = melFloor or 1.0
 
   if not paths then paths = require ('paths') end
   if not speech then speech = require ('speech') end
@@ -69,7 +69,6 @@ function Audio.getMfcc(file,
   if NaN:sum() > 0 then
     print(f_path)
     print('MFCC NaN: ' .. tostring(NaN:sum()))
-    print('MEAN: ' .. tostring(mean) .. ' STD: ' .. tostring(std))
 --    mfcc[NaN] = 0
   end
 
@@ -87,7 +86,7 @@ function Audio.getMfsc(file,
   frameSize = frameSize or 25
   frameStride = frameStride or 10
   filterbankChannels = filterbankChannels or 40
-  melFloor = melFloor or 0.0
+  melFloor = melFloor or 1.0
 
   if not paths then paths = require ('paths') end
   if not speech then speech = require ('speech') end
@@ -111,9 +110,6 @@ function Audio.getMfsc(file,
   if NaN:sum() > 0 then
     print(f_path)
     print('MFSC NaN: ' .. tostring(NaN:sum()))
-    print(d)
-    print(mfsc)
-    print('MEAN: ' .. tostring(mean) .. ' STD: ' .. tostring(std))
 --    mfsc[NaN] = 0
   end
 
