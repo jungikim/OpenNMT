@@ -144,7 +144,7 @@ function SeqTagger:loadCtcDecoder(dicts, ctc_nbest, ctc_lm, ctc_lm_weight)
 --    scorer:SetNGramModelWeight(float) 1.0?
 --    scorer:SetWordInsertionWeight(float) 0.0?
 
-    scorer:SetNGramModelWeight(self.ctc_lm_weight)
+    scorer:setNGramModelWeight(self.ctc_lm_weight)
 
     self.ctc_decoder = ctcdecode.BeamSearchDecoder(
       --[[numClasses]]dicts.tgt.words:size(),
