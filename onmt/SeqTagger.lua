@@ -97,6 +97,12 @@ function SeqTagger:__init(args, dicts)
     self.criterion = nn.CTCCriterion(--[[batchFirst]] true) -- with batchFirst, expects B x seqLen x dim as input
     self:loadCtcDecoder(dicts)
   end
+
+  if args and
+     args.preprocess and
+     args.preprocess.audio_feature_type then
+    self.audio_feature_type = args.preprocess.audio_feature_type
+  end
 end
 
 function SeqTagger:loadCtcDecoder(dicts, ctc_nbest, ctc_lm)
@@ -176,6 +182,13 @@ function SeqTagger.load(args, models, dicts)
     self.criterion = nn.CTCCriterion(--[[batchFirst]] true) -- with batchFirst, expects B x seqLen x dim as input
     self.loglikelihood = 'ctc'
     self:loadCtcDecoder(dicts)
+  end
+
+  if args and
+     args.preprocess and
+     args.preprocess.audio_feature_type then
+    self.audio_feature_type = args.preprocess.audio_feature_type
+    _G.logger:info('Model is trained with audio_feature_type: ' .. self.audio_feature_type)
   end
 
   return self

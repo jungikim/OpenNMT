@@ -838,7 +838,7 @@ function Preprocessor:makeGenericData(files, isInputVector, dicts, nameSources, 
                   elseif _G.args.audio_feature_type == 'spectrogram' then
                     instance[i] = onmt.data.Audio.getSpectrogram(tokens[1])
                   else
-                    _G.logger:error('Unknown audio feature type: %s', _G.args.audio_feature_type)
+                    _G.logger:error('Unknown audio feature type: ' .. _G.args.audio_feature_type)
                     os.exit(1)
                   end
                 else

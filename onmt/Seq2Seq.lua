@@ -147,6 +147,13 @@ function Seq2Seq.load(args, models, dicts)
   self.criterion = onmt.ParallelClassNLLCriterion(onmt.Factory.getOutputSizes(dicts.tgt))
   self.tgtVocabSize = dicts.tgt.words:size(1)
 
+  if args and
+     args.preprocess and
+     args.preprocess.audio_feature_type then
+    self.audio_feature_type = args.preprocess.audio_feature_type
+    _G.logger:info('Model is trained with audio_feature_type: ' .. self.audio_feature_type)
+  end
+
   return self
 end
 

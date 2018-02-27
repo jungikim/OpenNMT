@@ -372,17 +372,20 @@ local function main()
 
   if onmt.train.Saver.checkpointDefined(opt) then
     model, trainStates = loadModel(opt, data.dicts)
-    if data.audio_feature_type and model.audio_feature_type and
-       data.audio_feature_type ~= model.audio_feature_type then
-      _G.logger:error('Incompatible audio feature type: data %s, model %s',
-                             data.audio_feature_type, model.audio_feature_type)
-      os.exit(1)
+    if data.opt and
+       data.opt.audio_feature_type and
+       model and
+       model.audio_feature_type then
+       if data.opt.audio_feature_type ~= model.audio_feature_type then
+         _G.logger:error('Incompatible audio feature type: data %s, model %s',
+                             data.opt.audio_feature_type, model.audio_feature_type)
+         os.exit(1)
+       else
+         _G.logger:info('Audio feature types of model and train data match')
+       end
     end
   else
     model = buildModel(opt, data.dicts)
-    if data.audio_feature_type then
-      model.audio_feature_type = data.audio_feature_type
-    end
   end
 
   onmt.utils.Cuda.convert(model)
