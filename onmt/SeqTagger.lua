@@ -105,11 +105,12 @@ function SeqTagger:__init(args, dicts)
   end
 end
 
-function SeqTagger:loadCtcDecoder(dicts, ctc_nbest, ctc_lm)
+function SeqTagger:loadCtcDecoder(dicts, ctc_nbest, ctc_lm, ctc_lm_weight)
   local ctcdecode = require 'ctcdecode'
   local paths = require 'paths'
 
   self.ctc_nBest =  ctc_nbest or 3
+  self.ctc_lm_weight = ctc_lm_weight or 1.0
 
   if ctc_lm and ctc_lm:len() > 0 then
     if not paths.filep(ctc_lm) then
@@ -131,21 +132,36 @@ function SeqTagger:loadCtcDecoder(dicts, ctc_nbest, ctc_lm)
     local scorer = ctcdecode.NGramBeamScorer(labelMapFilename, ngramModelFilename)
 
     self.ctc_decoder = ctcdecode.NGramDecoder(
-      dicts.tgt.words:size(),
-      10 * self.ctc_nBest,
-      scorer,
-      1,
-      false
+      --[[numClasses]]dicts.tgt.words:size(),
+      --[[beamWidth]]10 * self.ctc_nBest,
+      --[[scorer]]scorer,
+      --[[blankLabel]]1,
+      --[[mergeRepeated]]false
       )
   else
     local scorer = ctcdecode.DefaultBeamScorer()
+--    CTC beam search decoder as described in https://arxiv.org/abs/1408.2873
+--    scorer:SetNGramModelWeight(float) 1.0?
+--    scorer:SetWordInsertionWeight(float) 0.0?
+
+    scorer:SetNGramModelWeight(self.ctc_lm_weight)
+
     self.ctc_decoder = ctcdecode.BeamSearchDecoder(
-      dicts.tgt.words:size(),
-      10 * self.ctc_nBest,
-      scorer,
-      1,
-      false
+      --[[numClasses]]dicts.tgt.words:size(),
+      --[[beamWidth]]10 * self.ctc_nBest,
+      --[[scorer]]scorer,
+      --[[blankLabel]]1,
+      --[[mergeRepeated]]false
     )
+--    https://research.google.com/pubs/pub44823.html
+--    Default is to do no label selection
+--    self.ctc_decoder:SetLabelSelectionSize(int) 40
+      -- how many items in each beam are passed through to the beam scorer.
+      -- Only items with top N input scores are considered.
+--    self.ctc_decoder:SetLabelSelectionMargin(float) 1.0
+      -- controls the difference between minimal input score (versus the best scoring label) for an item to be passed to the beam scorer.
+      -- This margin is expressed in terms of log-probability.
+      -- -1 for unlimited;
   end
 end
 

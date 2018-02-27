@@ -28,6 +28,13 @@ local options = {
     {
       structural = 1
     }
+  },
+  {
+    '-ctc_lm_weight', 1.0,
+    [[Specifies language model weight]],
+    {
+      structural = 1
+    }
   }
 }
 
@@ -48,7 +55,7 @@ function Tagger:__init(args)
   end
 
   self.model = onmt.SeqTagger.load(self.checkpoint.options, self.checkpoint.models, self.checkpoint.dicts)
-  self.model:loadCtcDecoder(self.checkpoint.dicts, args.ctc_nbest, args.ctc_lm)
+  self.model:loadCtcDecoder(self.checkpoint.dicts, args.ctc_nbest, args.ctc_lm, args.ctc_lm_weight)
 
   onmt.utils.Cuda.convert(self.model)
 
