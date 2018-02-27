@@ -131,8 +131,8 @@ function SeqTagger:loadCtcDecoder(dicts, ctc_nbest, ctc_lm, ctc_lm_weight)
 
     local scorer = ctcdecode.NGramBeamScorer(labelMapFilename, ngramModelFilename)
 --    CTC beam search decoder as described in https://arxiv.org/abs/1408.2873
---    scorer:SetNGramModelWeight(float) 1.0?
---    scorer:SetWordInsertionWeight(float) 0.0?
+--    scorer:setNGramModelWeight(float) 1.0?
+--    scorer:setWordInsertionWeight(float) 0.0?
 
     scorer:setNGramModelWeight(self.ctc_lm_weight)
 
