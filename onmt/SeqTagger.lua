@@ -130,6 +130,11 @@ function SeqTagger:loadCtcDecoder(dicts, ctc_nbest, ctc_lm, ctc_lm_weight)
     local ngramModelFilename = paths.thisfile(ctc_lm)
 
     local scorer = ctcdecode.NGramBeamScorer(labelMapFilename, ngramModelFilename)
+--    CTC beam search decoder as described in https://arxiv.org/abs/1408.2873
+--    scorer:SetNGramModelWeight(float) 1.0?
+--    scorer:SetWordInsertionWeight(float) 0.0?
+
+    scorer:setNGramModelWeight(self.ctc_lm_weight)
 
     self.ctc_decoder = ctcdecode.NGramDecoder(
       --[[numClasses]]dicts.tgt.words:size(),
@@ -138,21 +143,6 @@ function SeqTagger:loadCtcDecoder(dicts, ctc_nbest, ctc_lm, ctc_lm_weight)
       --[[blankLabel]]1,
       --[[mergeRepeated]]false
       )
-  else
-    local scorer = ctcdecode.DefaultBeamScorer()
---    CTC beam search decoder as described in https://arxiv.org/abs/1408.2873
---    scorer:SetNGramModelWeight(float) 1.0?
---    scorer:SetWordInsertionWeight(float) 0.0?
-
-    scorer:setNGramModelWeight(self.ctc_lm_weight)
-
-    self.ctc_decoder = ctcdecode.BeamSearchDecoder(
-      --[[numClasses]]dicts.tgt.words:size(),
-      --[[beamWidth]]10 * self.ctc_nBest,
-      --[[scorer]]scorer,
-      --[[blankLabel]]1,
-      --[[mergeRepeated]]false
-    )
 --    https://research.google.com/pubs/pub44823.html
 --    Default is to do no label selection
 --    self.ctc_decoder:SetLabelSelectionSize(int) 40
@@ -162,6 +152,16 @@ function SeqTagger:loadCtcDecoder(dicts, ctc_nbest, ctc_lm, ctc_lm_weight)
       -- controls the difference between minimal input score (versus the best scoring label) for an item to be passed to the beam scorer.
       -- This margin is expressed in terms of log-probability.
       -- -1 for unlimited;
+  else
+    local scorer = ctcdecode.DefaultBeamScorer()
+
+    self.ctc_decoder = ctcdecode.BeamSearchDecoder(
+      --[[numClasses]]dicts.tgt.words:size(),
+      --[[beamWidth]]10 * self.ctc_nBest,
+      --[[scorer]]scorer,
+      --[[blankLabel]]1,
+      --[[mergeRepeated]]false
+    )
   end
 end
 
