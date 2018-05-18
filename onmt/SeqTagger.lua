@@ -136,9 +136,9 @@ function SeqTagger:__init(args, dicts)
   if args.weopt_pretrained and args.weopt_pretrained:len() > 0 then
 
     self.weopt_pretrained = torch.load(args.weopt_pretrained)
-    assert(self.weopt_pretrained:size(1) == generator.net.weight:size(1),
+    assert(self.weopt_pretrained:size(1) == self.models.generator.net.weight:size(1),
            "WE Optimization embeddings must match the vocabulary size")
-    assert(self.weopt_pretrained:size(2) <= generator.net.weight:size(2),
+    assert(self.weopt_pretrained:size(2) <= self.models.generator.net.weight:size(2),
            "The size of the WE Optimiation embeddings is larger than the set embedding size")
 
     self.weopt_dict = onmt.utils.Dict.new(args.weopt_dict)
