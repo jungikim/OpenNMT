@@ -22,6 +22,8 @@ local function write_embeddings(filename, dict, embeddings)
 end
 
 local function main()
+  _G.logger = onmt.utils.Logger.new('', false, 'INFO')
+
   assert(path.exists(opt.model), 'model \'' .. opt.model .. '\' does not exist.')
 
   if opt.gpuid > 0 then
@@ -70,10 +72,14 @@ local function main()
 
   print("Writing source embeddings")
   write_embeddings(opt.output_dir .. "/src_embeddings.txt", dicts.src.words, encoder_embeddings)
+  torch.save(opt.output_dir .. "/src_embeddings.t7", encoder_embeddings)
+  onmt.data.Vocabulary.save('source', dicts.src.words, opt.output_dir .. "/src_dict.txt")
 
   if checkpoint.models.decoder then
     print("Writing target embeddings")
     write_embeddings(opt.output_dir .. "/tgt_embeddings.txt", dicts.tgt.words, decoder_embeddings)
+    torch.save(opt.output_dir .. "/tgt_embeddings.t7", decoder_embeddings)
+    onmt.data.Vocabulary.save('target', dicts.tgt.words, opt.output_dir .. "/tgt_dict.txt")
   end
   print('... done.')
 end
