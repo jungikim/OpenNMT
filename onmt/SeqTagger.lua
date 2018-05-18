@@ -59,6 +59,41 @@ local options = {
       enum = {'word', 'sentence', 'ctc'},
       structural = 1
     }
+  },
+  {
+    '-weopt_pretrained', '',
+    [[Specifies the pre-trained word embedding that the network should try to optimize]],
+    {
+      structural = 1
+    }
+  },
+  {
+    '-weopt_dict', '',
+    [[Specifies the dictionary for the pre-trained word embedding that the network should try to optimize]],
+    {
+      structural = 1
+    }
+  },
+  {
+    '-weopt_loss', 'mse',
+    [[Specifies the loss function for the pre-trained word embedding optimization]],
+    {
+      structural = 1
+    }
+  },
+  {
+    '-weopt_model', 'lstm',
+    [[Specifies the model that learns the pre-trained word embedding from underlying model]],
+    {
+      structural = 1
+    }
+  },
+  {
+    '-weopt_ctc_char_concat', false,
+    [[Specifies whether or not the output of ctc is char and should be concatenated to form words]],
+    {
+      structural = 1
+    }
   }
 }
 
@@ -96,6 +131,34 @@ function SeqTagger:__init(args, dicts)
     require 'nnx'
     self.criterion = nn.CTCCriterion(--[[batchFirst]] true) -- with batchFirst, expects B x seqLen x dim as input
     self:loadCtcDecoder(dicts)
+  end
+
+  if args.weopt_pretrained and args.weopt_pretrained:len() > 0 then
+
+    self.weopt_pretrained = torch.load(args.weopt_pretrained)
+    assert(self.weopt_pretrained:size(1) == generator.net.weight:size(1),
+           "WE Optimization embeddings must match the vocabulary size")
+    assert(self.weopt_pretrained:size(2) <= generator.net.weight:size(2),
+           "The size of the WE Optimiation embeddings is larger than the set embedding size")
+
+    self.weopt_dict = onmt.utils.Dict.new(args.weopt_dict)
+
+    if args.weopt_model == 'lstm' then
+      self.models.weopt = onmt.LSTM.new(--[[layers]] 1,
+                                        --[[inputSize]] self.models.encoder.args.rnnSize,
+                                        --[[hiddenSize]] self.weopt_pretrained:size(2),
+                                        --[[dropout]] 0,
+                                        --[[residual]] false,
+                                        --[[dropout_input]] false,
+                                        --[[dropout_type]] '')
+--    elseif args.weopt_model == 'cnn' then
+    else
+      _G.logger:error('Model option weopt_model=' .. args.weopt_model .. ' is invalid or not implemented yet')
+      os.exit(1)
+    end
+
+    self.weopt_criterion = nn.MSECriterion()
+    self.weopt_criterion.siveAverage = false
   end
 
   if args and
