@@ -136,10 +136,9 @@ function SeqTagger:__init(args, dicts)
   if args.weopt_pretrained and args.weopt_pretrained:len() > 0 then
 
     self.weopt_pretrained = torch.load(args.weopt_pretrained)
-    assert(self.weopt_pretrained:size(1) == self.models.generator.net.weight:size(1),
-           "WE Optimization embeddings must match the vocabulary size")
-    assert(self.weopt_pretrained:size(2) <= self.models.generator.net.weight:size(2),
-           "The size of the WE Optimiation embeddings is larger than the set embedding size")
+
+    print('self.weopt_pretrained:size(1):'.. self.weopt_pretrained:size(1))
+    print('self.weopt_pretrained:size(2):'.. self.weopt_pretrained:size(2))
 
     self.weopt_dict = onmt.utils.Dict.new(args.weopt_dict)
 
@@ -261,6 +260,41 @@ function SeqTagger.load(args, models, dicts)
     self.criterion = nn.CTCCriterion(--[[batchFirst]] true) -- with batchFirst, expects B x seqLen x dim as input
     self.loglikelihood = 'ctc'
     self:loadCtcDecoder(dicts)
+  end
+
+  if args.weopt_pretrained and args.weopt_pretrained:len() > 0 then
+
+    self.weopt_pretrained = torch.load(args.weopt_pretrained)
+
+    print('self.weopt_pretrained:size(1):'.. self.weopt_pretrained:size(1)) -- vocab size
+    print('self.weopt_pretrained:size(2):'.. self.weopt_pretrained:size(2)) -- embedding size
+
+    self.weopt_dict = onmt.utils.Dict.new(args.weopt_dict)
+
+    if not args.weopt_model then
+      if args.weopt_model == 'lstm' then
+        self.models.weopt = onmt.LSTM.new(--[[layers]] 1,
+                                          --[[inputSize]] self.models.encoder.args.rnnSize,
+                                          --[[hiddenSize]] self.weopt_pretrained:size(2),
+                                          --[[dropout]] 0,
+                                          --[[residual]] false,
+                                          --[[dropout_input]] false,
+                                          --[[dropout_type]] '')
+  --    elseif args.weopt_model == 'cnn' then
+      else
+        _G.logger:error('Model option weopt_model=' .. args.weopt_model .. ' is invalid or not implemented yet')
+        os.exit(1)
+      end
+    else
+      _G.logger:info('Model has WEOPT.')
+      if self.models.weopt.outputSize ~= self.weopt_pretrained:size(2) then
+        _G.logger:error('Output size of WEOPT model ' .. self.models.weopt.outputSize .. ' does not match pretrained embedding size ' .. self.weopt_pretrained:size(2))
+        os.exit(1)
+      end
+    end
+
+    self.weopt_criterion = nn.MSECriterion()
+    self.weopt_criterion.siveAverage = false
   end
 
   if args and
@@ -422,6 +456,36 @@ function SeqTagger:trainNetwork(batch)
     for t = 1, context:size(2) do
       gradContexts:select(2,t):copy(self.models.generator:backward(context:select(2, t), {gradCriterion:select(2,t)}))
     end
+
+
+
+    if self.models.weopt then
+
+      for b = 1, batch.size do
+        -- expects tagsScores to be seqLen x B x tagSize
+        local outputs, alignments, pathLen, scores =
+                     self.ctc_decoder:decode(tagsScores[{{b},{batch.sourceLength - batch.sourceSize[b] + 1, batch.sourceLength},{}}]:transpose(1,2):type('torch.FloatTensor'),
+                                             self.ctc_nBest,
+                                             torch.IntTensor({batch.sourceSize[b]}))
+
+        print('Outputs: ')
+        print(outputs)
+
+        print('alignments: ')
+        print(alignments)
+
+        os.exit(1)
+
+--        for t = 1, pathLen[1][--[[Best]] 1] do
+--          pred[b][t] = outputs[1][--[[Best]] 1][t]
+--          feats[b][t] = {}
+--        end
+      end
+
+
+    end
+
+
 
   else -- 'word'
     -- For each word of the sentence, generate target.
